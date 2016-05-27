@@ -33,6 +33,8 @@ import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.MetadataFetchFailedException
 import org.apache.spark.storage.{BlockId, BlockManagerId, ShuffleBlockId}
 import org.apache.spark.util._
+import scala.reflect.ClassTag
+
 
 private[spark] sealed trait MapOutputTrackerMessage
 private[spark] case class GetMapOutputStatuses(shuffleId: Int)
@@ -64,7 +66,7 @@ private[spark] class MapOutputTrackerMasterEndpoint(
  * a stage. This is abstract because different versions of MapOutputTracker
  * (driver and executor) use different HashMap to store its metadata.
  */
-private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging {
+private[spark] abstract class MapOutputTracker[U: ClassTag](conf: SparkConf) extends Logging {
 
   /** Set to the MapOutputTrackerMasterEndpoint living on the driver. */
   var trackerEndpoint: RpcEndpointRef = _
@@ -79,7 +81,7 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
    * Note: because mapStatuses is accessed concurrently, subclasses should make sure it's a
    * thread-safe map.
    */
-  protected val mapStatuses: Map[Int, Array[MapStatus]]
+  protected val mapStatuses: Map[Int, Array[MapStatus[U]]]
 
   /**
    * Incremented every time a fetch fails so that client nodes know to clear
@@ -169,12 +171,12 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
    *
    * (It would be nice to remove this restriction in the future.)
    */
-  private def getStatuses(shuffleId: Int): Array[MapStatus] = {
+  private def getStatuses[U](shuffleId: Int): Array[MapStatus[U]] = {
     val statuses = mapStatuses.get(shuffleId).orNull
     if (statuses == null) {
       logInfo("Don't have map outputs for shuffle " + shuffleId + ", fetching them")
       val startTime = System.currentTimeMillis
-      var fetchedStatuses: Array[MapStatus] = null
+      var fetchedStatuses: Array[MapStatus[U]] = null
       fetching.synchronized {
         // Someone else is fetching it; wait for them to be done
         while (fetching.contains(shuffleId)) {
@@ -187,7 +189,7 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
 
         // Either while we waited the fetch happened successfully, or
         // someone fetched it in between the get and the fetching.synchronized.
-        fetchedStatuses = mapStatuses.get(shuffleId).orNull
+        fetchedStatuses = mapStatuses.get(shuffleId).orNull.asInstanceOf[Array[MapStatus[U]]]
         if (fetchedStatuses == null) {
           // We have to do the fetch, get others to wait for us.
           fetching += shuffleId
@@ -200,7 +202,7 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
         // This try-finally prevents hangs due to timeouts:
         try {
           val fetchedBytes = askTracker[Array[Byte]](GetMapOutputStatuses(shuffleId))
-          fetchedStatuses = MapOutputTracker.deserializeMapStatuses(fetchedBytes)
+          fetchedStatuses = MapOutputTracker.deserializeMapStatuses(fetchedBytes).asInstanceOf[Array[MapStatus[U]]]
           logInfo("Got the output locations")
           mapStatuses.put(shuffleId, fetchedStatuses)
         } finally {
@@ -438,6 +440,24 @@ private[spark] class MapOutputTrackerMaster(conf: SparkConf,
     } else {
       Nil
     }
+  }
+
+  def getSaRes[U](shuffleId: Int)
+  :Option[Array[U]] = {
+    if (mapStatuses.contains(shuffleId)) {
+      val statuses = mapStatuses(shuffleId)
+      if (statuses.nonEmpty) {
+        val res = new Array[U](statuses.length)
+        var mapIdx = 0
+        while(mapIdx < statuses.length) {
+          val status = statuses(mapIdx).asInstanceOf[MapStatus[U]]
+          res(mapIdx) = status.getSa()
+          mapIdx = mapIdx + 1
+        }
+        return Some(res)
+      }
+    }
+    None
   }
 
   /**
@@ -681,11 +701,11 @@ private[spark] object MapOutputTracker extends Logging {
    *         and the second item is a sequence of (shuffle block ID, shuffle block size) tuples
    *         describing the shuffle blocks that are stored at that block manager.
    */
-  private def convertMapStatuses(
+  private def convertMapStatuses[U](
       shuffleId: Int,
       startPartition: Int,
       endPartition: Int,
-      statuses: Array[MapStatus]): Seq[(BlockManagerId, Seq[(BlockId, Long)])] = {
+      statuses: Array[MapStatus[U]]): Seq[(BlockManagerId, Seq[(BlockId, Long)])] = {
     assert (statuses != null)
     val splitsByAddress = new HashMap[BlockManagerId, ArrayBuffer[(BlockId, Long)]]
     for ((status, mapId) <- statuses.zipWithIndex) {

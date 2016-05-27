@@ -525,6 +525,28 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     groupByKey(new HashPartitioner(numPartitions))
   }
 
+
+  def shuffleAggregate[K: ClassTag, U: ClassTag, V: ClassTag, T: ClassTag](partitioner: Partitioner, zeroValue: C,
+                                    seqOp: (U, V) => U, combOp: (U, U) => U): SaRDD[K,V,U] = {
+    if (keyClass.isArray && partitioner.isInstanceOf[HashPartitioner]) {
+      throw new SparkException("Default partitioner cannot partition array keys.")
+    }
+    if (self.partitioner == Some(partitioner)) {
+      throw new SparkException("shuffleAggregate: No shuffle needed, please use aggregate directly!")
+    }
+
+    val saRDD = new SaRDD[K, V, U](self.asInstanceOf[RDD[(K,V)]], partitioner, zeroValue, seqOp: (U, V) => C, combOp: (C, C) => C)
+
+    saRDD.blankAggregate('0')
+    saRDD
+//    val fake_aggregatePartition = (it: Iterator[T]) => it.filter(i => false).asInstanceOf[U]
+////    fake_aggregatePartition
+//    val fake_mergeResult = (index: Int, taskResult: U) => Unit
+//    saRDD.sc.runJob(saRDD.asInstanceOf[RDD[T]], fake_aggregatePartition, fake_mergeResult)
+//    saRDD
+  }
+
+
   /**
    * Return a copy of the RDD partitioned using the specified partitioner.
    */

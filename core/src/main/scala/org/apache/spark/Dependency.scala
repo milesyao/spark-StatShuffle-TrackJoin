@@ -17,12 +17,12 @@
 
 package org.apache.spark
 
-import scala.reflect.ClassTag
-
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleHandle
+
+import scala.reflect.ClassTag
 
 /**
  * :: DeveloperApi ::
@@ -51,6 +51,18 @@ abstract class NarrowDependency[T](_rdd: RDD[T]) extends Dependency[T] {
   override def rdd: RDD[T] = _rdd
 }
 
+//@DeveloperApi
+//class SaDependency[K: ClassTag, V: ClassTag, C: ClassTag, U: ClassTag](
+//    @transient private val _rdd: RDD[_ <: Product2[K, V]],
+//    override val partitioner: Partitioner,
+//    override val serializer: Serializer = SparkEnv.get.serializer,
+//    override val keyOrdering: Option[Ordering[K]] = None,
+//    override val aggregator: Option[Aggregator[K, V, C]] = None,
+//    override val mapSideCombine: Boolean = false,
+//    val zeroValue: U,
+//    seqOp: (U, V) => U,
+//    combOp: (U, U) => U)
+//  extends ShuffleDependency(_rdd, partitioner, serializer, keyOrdering, aggregator, mapSideCombine)
 
 /**
  * :: DeveloperApi ::
@@ -66,7 +78,7 @@ abstract class NarrowDependency[T](_rdd: RDD[T]) extends Dependency[T] {
  * @param aggregator map/reduce-side aggregator for RDD's shuffle
  * @param mapSideCombine whether to perform partial aggregation (also known as map-side combine)
  */
-@DeveloperApi
+
 class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     @transient private val _rdd: RDD[_ <: Product2[K, V]],
     val partitioner: Partitioner,
@@ -75,6 +87,10 @@ class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     val aggregator: Option[Aggregator[K, V, C]] = None,
     val mapSideCombine: Boolean = false)
   extends Dependency[Product2[K, V]] {
+
+  var _zeroValue: C  = _
+  var _seqOp: (C, V) => C = null
+  var _combOp: (C, C) => C = null
 
   override def rdd: RDD[Product2[K, V]] = _rdd.asInstanceOf[RDD[Product2[K, V]]]
 
@@ -91,6 +107,25 @@ class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     shuffleId, _rdd.partitions.length, this)
 
   _rdd.sparkContext.cleaner.foreach(_.registerShuffleForCleanup(this))
+
+
+  def setAggregate(zeroValue: C, seqOp:(C, V) => C, combOp:(C, C) => C): Unit = {
+    _zeroValue = zeroValue
+    _seqOp = seqOp
+    _combOp = combOp
+  }
+
+  def getZeroValue: C = {
+    _zeroValue
+  }
+
+  def getSeqOp: (C, V) => C = {
+    _seqOp
+  }
+
+  def getCombOp: (C, C) => C = {
+    _combOp
+  }
 }
 
 

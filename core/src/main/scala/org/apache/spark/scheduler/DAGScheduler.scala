@@ -29,9 +29,7 @@ import scala.concurrent.duration._
 import scala.language.existentials
 import scala.language.postfixOps
 import scala.util.control.NonFatal
-
 import org.apache.commons.lang3.SerializationUtils
-
 import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.executor.TaskMetrics
@@ -43,6 +41,8 @@ import org.apache.spark.rpc.RpcTimeout
 import org.apache.spark.storage._
 import org.apache.spark.storage.BlockManagerMessages.BlockManagerHeartbeat
 import org.apache.spark.util._
+
+import scala.reflect.ClassTag
 
 /**
  * The high-level scheduling layer that implements stage-oriented scheduling. It computes a DAG of
@@ -141,7 +141,7 @@ class DAGScheduler(
 
   private[scheduler] val jobIdToStageIds = new HashMap[Int, HashSet[Int]]
   private[scheduler] val stageIdToStage = new HashMap[Int, Stage]
-  private[scheduler] val shuffleToMapStage = new HashMap[Int, ShuffleMapStage]
+  private[scheduler] val shuffleToMapStage = new HashMap[Int, ShuffleMapStage[_,_]]
   private[scheduler] val jobIdToActiveJob = new HashMap[Int, ActiveJob]
 
   // Stages we need to run whose parents aren't done
@@ -278,11 +278,11 @@ class DAGScheduler(
   /**
    * Get or create a shuffle map stage for the given shuffle dependency's map side.
    */
-  private def getShuffleMapStage(
-      shuffleDep: ShuffleDependency[_, _, _],
-      firstJobId: Int): ShuffleMapStage = {
-    shuffleToMapStage.get(shuffleDep.shuffleId) match {
-      case Some(stage) => stage
+  private def getShuffleMapStage[K, V, C](
+      shuffleDep: ShuffleDependency[K, V, C],
+      firstJobId: Int): ShuffleMapStage[C,V] = {
+    val res_stage: ShuffleMapStage[C,V] = shuffleToMapStage.get(shuffleDep.shuffleId) match {
+      case Some(stage) => stage[C,V]
       case None =>
         // We are going to register ancestor shuffle dependencies
         getAncestorShuffleDependencies(shuffleDep.rdd).foreach { dep =>
@@ -293,8 +293,12 @@ class DAGScheduler(
         // Then register current shuffleDep
         val stage = newOrUsedShuffleStage(shuffleDep, firstJobId)
         shuffleToMapStage(shuffleDep.shuffleId) = stage
-        stage
+        stage[C,V]
     }
+    if(shuffleDep.getSeqOp!=null) {
+      res_stage.setAggregate(shuffleDep.getZeroValue, shuffleDep.getSeqOp, shuffleDep.getCombOp)
+    }
+    res_stage
   }
 
   /**
@@ -317,9 +321,9 @@ class DAGScheduler(
       numTasks: Int,
       shuffleDep: ShuffleDependency[_, _, _],
       firstJobId: Int,
-      callSite: CallSite): ShuffleMapStage = {
+      callSite: CallSite): ShuffleMapStage[_,_] = {
     val (parentStages: List[Stage], id: Int) = getParentStagesAndId(rdd, firstJobId)
-    val stage: ShuffleMapStage = new ShuffleMapStage(id, rdd, numTasks, parentStages,
+    val stage: ShuffleMapStage[_, _] = new ShuffleMapStage(id, rdd, numTasks, parentStages,
       firstJobId, callSite, shuffleDep)
 
     stageIdToStage(id) = stage
@@ -351,7 +355,7 @@ class DAGScheduler(
    */
   private def newOrUsedShuffleStage(
       shuffleDep: ShuffleDependency[_, _, _],
-      firstJobId: Int): ShuffleMapStage = {
+      firstJobId: Int): ShuffleMapStage[_,_] = {
     val rdd = shuffleDep.rdd
     val numTasks = rdd.partitions.length
     val stage = newShuffleMapStage(rdd, numTasks, shuffleDep, firstJobId, rdd.creationSite)
@@ -882,7 +886,7 @@ class DAGScheduler(
       properties: Properties) {
     // Submitting this map stage might still require the creation of some parent stages, so make
     // sure that happens.
-    var finalStage: ShuffleMapStage = null
+    var finalStage: ShuffleMapStage[_,_] = null
     try {
       // New stage creation may throw an exception if, for example, jobs are run on a
       // HadoopRDD whose underlying HDFS files have been deleted.
@@ -920,6 +924,35 @@ class DAGScheduler(
     submitWaitingStages()
   }
 
+//  /**
+//    * Chunnan
+//    */
+//  /** Submits stage, but first recursively submits any missing parents. */
+//  private def submitStage[U: ClassTag, V: ClassTag](stage: Stage,
+//                                                    zeroValue: U,
+//                                                    seqOp: (U, V) => U,
+//                                                    combOp: (U, U) => U) {
+//    val jobId = activeJobForStage(stage)
+//    if (jobId.isDefined) {
+//      logDebug("submitStage(" + stage + ")")
+//      if (!waitingStages(stage) && !runningStages(stage) && !failedStages(stage)) {
+//        val missing = getMissingParentStages(stage).sortBy(_.id)
+//        logDebug("missing: " + missing)
+//        if (missing.isEmpty) {
+//          logInfo("Submitting " + stage + " (" + stage.rdd + "), which has no missing parents")
+//          submitMissingTasks(stage, jobId.get)
+//        } else {
+//          for (parent <- missing) {
+//            submitStage(parent)
+//          }
+//          waitingStages += stage
+//        }
+//      }
+//    } else {
+//      abortStage(stage, "No active job for stage " + stage.id, None)
+//    }
+//  }
+
   /** Submits stage, but first recursively submits any missing parents. */
   private def submitStage(stage: Stage) {
     val jobId = activeJobForStage(stage)
@@ -944,7 +977,7 @@ class DAGScheduler(
   }
 
   /** Called when stage's parents are available and we can now do its task. */
-  private def submitMissingTasks(stage: Stage, jobId: Int) {
+  private def submitMissingTasks[U,T](stage: Stage, jobId: Int) {
     logDebug("submitMissingTasks(" + stage + ")")
     // Get our pending tasks and remember them in our pendingTasks entry
     stage.pendingPartitions.clear()
@@ -1026,12 +1059,14 @@ class DAGScheduler(
 
     val tasks: Seq[Task[_]] = try {
       stage match {
-        case stage: ShuffleMapStage =>
+        case stage: ShuffleMapStage[U,T] =>
           partitionsToCompute.map { id =>
             val locs = taskIdToLocations(id)
             val part = stage.rdd.partitions(id)
-            new ShuffleMapTask(stage.id, stage.latestInfo.attemptId,
+            val smt: ShuffleMapTask[U,T] = new ShuffleMapTask(stage.id, stage.latestInfo.attemptId,
               taskBinary, part, locs, stage.latestInfo.taskMetrics, properties)
+            smt.setAggregate(stage.getZeroValue, stage.getSeqOp, stage.getCombOp)
+            smt
           }
 
         case stage: ResultStage =>

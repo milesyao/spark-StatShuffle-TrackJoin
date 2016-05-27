@@ -21,13 +21,15 @@ import java.nio.ByteBuffer
 import java.util.Properties
 
 import scala.language.existentials
-
 import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.shuffle.ShuffleWriter
+import org.apache.spark.shuffle.sort.SortShuffleWriter
+
+import scala.reflect.ClassTag
 
 /**
  * A ShuffleMapTask divides the elements of an RDD into multiple buckets (based on a partitioner
@@ -44,7 +46,7 @@ import org.apache.spark.shuffle.ShuffleWriter
  * @param metrics a [[TaskMetrics]] that is created at driver side and sent to executor side.
  * @param localProperties copy of thread-local properties set by the user on the driver side.
  */
-private[spark] class ShuffleMapTask(
+private[spark] class ShuffleMapTask[U: ClassTag, C: ClassTag](
     stageId: Int,
     stageAttemptId: Int,
     taskBinary: Broadcast[Array[Byte]],
@@ -54,6 +56,16 @@ private[spark] class ShuffleMapTask(
     localProperties: Properties)
   extends Task[MapStatus](stageId, stageAttemptId, partition.index, metrics, localProperties)
   with Logging {
+
+  var _zeroValue: U  = _
+  var _seqOp: (U, C) => U = null
+  var _combOp: (U, U) => U = null
+
+  def setAggregate(zeroValue: U, seqOp:(U, C) => U, combOp:(U, U) => U): Unit = {
+    _zeroValue = zeroValue
+    _seqOp = seqOp
+    _combOp = combOp
+  }
 
   /** A constructor used only in test suites. This does not require passing in an RDD. */
   def this(partitionId: Int) {
@@ -72,12 +84,16 @@ private[spark] class ShuffleMapTask(
       ByteBuffer.wrap(taskBinary.value), Thread.currentThread.getContextClassLoader)
     _executorDeserializeTime = System.currentTimeMillis() - deserializeStartTime
 
+//    var writer: ShuffleWriter[Any, Any] = null
     var writer: ShuffleWriter[Any, Any] = null
+    var sortWriter: SortShuffleWriter[Any, Any, C, U] = null
     try {
       val manager = SparkEnv.get.shuffleManager
       writer = manager.getWriter[Any, Any](dep.shuffleHandle, partitionId, context)
-      writer.write(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
-      writer.stop(success = true).get
+      sortWriter = writer.asInstanceOf[SortShuffleWriter[Any, Any, C, U]]
+      sortWriter.setAggregate(_zeroValue, _seqOp, _combOp)
+      sortWriter.write(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
+      sortWriter.stop(success = true).get
     } catch {
       case e: Exception =>
         try {

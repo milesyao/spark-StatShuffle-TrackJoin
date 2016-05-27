@@ -87,7 +87,7 @@ import org.apache.spark.storage.{BlockId, DiskBlockObjectWriter}
  *
  *  - Users are expected to call stop() at the end to delete all the intermediate files.
  */
-private[spark] class ExternalSorter[K, V, C](
+private[spark] class ExternalSorter[K, V, C, U](
     context: TaskContext,
     aggregator: Option[Aggregator[K, V, C]] = None,
     partitioner: Option[Partitioner] = None,
@@ -95,6 +95,23 @@ private[spark] class ExternalSorter[K, V, C](
     serializer: Serializer = SparkEnv.get.serializer)
   extends Spillable[WritablePartitionedPairCollection[K, C]](context.taskMemoryManager())
   with Logging {
+
+  var saRes: U = _
+  var _zeroValue: U  = _
+  var _seqOp: (U, C) => U = null
+  var _combOp: (U, U) => U = null
+
+  def setAggregate(zeroValue: U, seqOp:(U, C) => U, combOp:(U, U) => U): ExternalSorter[K, V, C, U] = {
+    _zeroValue = zeroValue
+    _seqOp = seqOp
+    _combOp = combOp
+    this
+  }
+
+  def setZeroValue(zeroValue: U): Unit = {
+    _zeroValue = zeroValue
+    saRes = zeroValue
+  }
 
   private val conf = SparkEnv.get.conf
 
@@ -720,6 +737,7 @@ private[spark] class ExternalSorter[K, V, C](
           val writer = blockManager.getDiskWriter(
             blockId, outputFile, serInstance, fileBufferSize, writeMetrics)
           for (elem <- elements) {
+            saRes = _combOp(saRes, _seqOp(_zeroValue, elem._2))
             writer.write(elem._1, elem._2)
           }
           writer.commitAndClose()
@@ -799,6 +817,7 @@ private[spark] class ExternalSorter[K, V, C](
           private[this] var cur = if (upstream.hasNext) upstream.next() else null
 
           def writeNext(writer: DiskBlockObjectWriter): Unit = {
+            saRes = _combOp(saRes, _seqOp(_zeroValue, cur._2))
             writer.write(cur._1._2, cur._2)
             cur = if (upstream.hasNext) upstream.next() else null
           }

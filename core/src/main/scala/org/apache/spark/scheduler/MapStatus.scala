@@ -20,16 +20,18 @@ package org.apache.spark.scheduler
 import java.io.{Externalizable, ObjectInput, ObjectOutput}
 
 import org.roaringbitmap.RoaringBitmap
-
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
+
+import scala.reflect.ClassTag
 
 /**
  * Result returned by a ShuffleMapTask to a scheduler. Includes the block manager address that the
  * task ran on as well as the sizes of outputs for each reducer, for passing on to the reduce tasks.
  */
-private[spark] sealed trait MapStatus {
+private[spark] sealed trait MapStatus[U] {
   /** Location where this task was run. */
+  var _saRes: U = _
   def location: BlockManagerId
 
   /**
@@ -39,8 +41,13 @@ private[spark] sealed trait MapStatus {
    * necessary for correctness, since block fetchers are allowed to skip zero-size blocks.
    */
   def getSizeForBlock(reduceId: Int): Long
+  def setSa(saRes: U): Unit = {
+    _saRes = saRes
+  }
+  def getSa(): U = {
+    _saRes
+  }
 }
-
 
 private[spark] object MapStatus {
 

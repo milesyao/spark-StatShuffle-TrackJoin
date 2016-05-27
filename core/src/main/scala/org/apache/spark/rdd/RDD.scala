@@ -83,7 +83,7 @@ abstract class RDD[T: ClassTag](
     logWarning("Spark does not support nested RDDs (see SPARK-5063)")
   }
 
-  private def sc: SparkContext = {
+  def sc: SparkContext = {
     if (_sc == null) {
       throw new SparkException(
         "This RDD lacks a SparkContext. It could happen in the following cases: \n(1) RDD " +
@@ -97,6 +97,7 @@ abstract class RDD[T: ClassTag](
     }
     _sc
   }
+
 
   /** Construct an RDD with just a one-to-one dependency on one parent */
   def this(@transient oneParent: RDD[_]) =
@@ -275,7 +276,7 @@ abstract class RDD[T: ClassTag](
    * This should ''not'' be called by users directly, but is available for implementors of custom
    * subclasses of RDD.
    */
-  final def iterator(split: Partition, context: TaskContext): Iterator[T] = {
+  def iterator(split: Partition, context: TaskContext): Iterator[T] = {
     if (storageLevel != StorageLevel.NONE) {
       getOrCompute(split, context)
     } else {
@@ -487,8 +488,7 @@ abstract class RDD[T: ClassTag](
    *
    * @param weights weights for splits, will be normalized if they don't sum to 1
    * @param seed random seed
-   *
-   * @return split RDDs in an array
+    * @return split RDDs in an array
    */
   def randomSplit(
       weights: Array[Double],
@@ -503,7 +503,8 @@ abstract class RDD[T: ClassTag](
   /**
    * Internal method exposed for Random Splits in DataFrames. Samples an RDD given a probability
    * range.
-   * @param lb lower bound to use for the Bernoulli sampler
+    *
+    * @param lb lower bound to use for the Bernoulli sampler
    * @param ub upper bound to use for the Bernoulli sampler
    * @param seed the seed for the Random number generator
    * @return A random sub-sample of the RDD without replacement.
@@ -521,8 +522,7 @@ abstract class RDD[T: ClassTag](
    *
    * @note this method should only be used if the resulting array is expected to be small, as
    * all the data is loaded into the driver's memory.
-   *
-   * @param withReplacement whether sampling is done with replacement
+    * @param withReplacement whether sampling is done with replacement
    * @param num size of the returned sample
    * @param seed seed for the random number generator
    * @return sample of specified size in an array
@@ -1064,6 +1064,17 @@ abstract class RDD[T: ClassTag](
     jobResult
   }
 
+  def blankAggregate[U: ClassTag](zeroValue: U): Unit = withScope {
+    // Clone the zero value since we will also be serializing it as part of tasks
+    var jobResult = Utils.clone(zeroValue, sc.env.serializer.newInstance())
+    val aggregatePartition = (it: Iterator[T]) => {
+      it.filter(i => false)
+      zeroValue
+    }
+    val mergeResult = (index: Int, taskResult: U) => jobResult = zeroValue
+    sc.runJob(this, aggregatePartition, mergeResult)
+  }
+
   /**
    * Aggregates the elements of this RDD in a multi-level tree pattern.
    *
@@ -1263,8 +1274,7 @@ abstract class RDD[T: ClassTag](
    *
    * @note this method should only be used if the resulting array is expected to be small, as
    * all the data is loaded into the driver's memory.
-   *
-   * @note due to complications in the internal implementation, this method will raise
+    * @note due to complications in the internal implementation, this method will raise
    * an exception if called on an RDD of `Nothing` or `Null`.
    */
   def take(num: Int): Array[T] = withScope {
@@ -1327,8 +1337,7 @@ abstract class RDD[T: ClassTag](
    *
    * @note this method should only be used if the resulting array is expected to be small, as
    * all the data is loaded into the driver's memory.
-   *
-   * @param num k, the number of top elements to return
+    * @param num k, the number of top elements to return
    * @param ord the implicit ordering for T
    * @return an array of top elements
    */
@@ -1350,8 +1359,7 @@ abstract class RDD[T: ClassTag](
    *
    * @note this method should only be used if the resulting array is expected to be small, as
    * all the data is loaded into the driver's memory.
-   *
-   * @param num k, the number of elements to return
+    * @param num k, the number of elements to return
    * @param ord the implicit ordering for T
    * @return an array of top elements
    */
@@ -1378,7 +1386,8 @@ abstract class RDD[T: ClassTag](
 
   /**
    * Returns the max of this RDD as defined by the implicit Ordering[T].
-   * @return the maximum element of the RDD
+    *
+    * @return the maximum element of the RDD
    * */
   def max()(implicit ord: Ordering[T]): T = withScope {
     this.reduce(ord.max)
@@ -1386,7 +1395,8 @@ abstract class RDD[T: ClassTag](
 
   /**
    * Returns the min of this RDD as defined by the implicit Ordering[T].
-   * @return the minimum element of the RDD
+    *
+    * @return the minimum element of the RDD
    * */
   def min()(implicit ord: Ordering[T]): T = withScope {
     this.reduce(ord.min)
@@ -1588,7 +1598,7 @@ abstract class RDD[T: ClassTag](
   // Other internal methods and fields
   // =======================================================================
 
-  private var storageLevel: StorageLevel = StorageLevel.NONE
+  var storageLevel: StorageLevel = StorageLevel.NONE
 
   /** User code that created this RDD (e.g. `textFile`, `parallelize`). */
   @transient private[spark] val creationSite = sc.getCallSite()
