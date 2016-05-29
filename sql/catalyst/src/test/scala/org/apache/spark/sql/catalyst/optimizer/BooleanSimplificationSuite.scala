@@ -19,25 +19,24 @@ package org.apache.spark.sql.catalyst.optimizer
 
 import org.apache.spark.sql.catalyst.SimpleCatalystConf
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.catalog.{InMemoryCatalog, SessionCatalog}
-import org.apache.spark.sql.catalyst.dsl.expressions._
-import org.apache.spark.sql.catalyst.dsl.plans._
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.catalyst.rules._
+import org.apache.spark.sql.catalyst.dsl.plans._
+import org.apache.spark.sql.catalyst.dsl.expressions._
 
 class BooleanSimplificationSuite extends PlanTest with PredicateHelper {
 
   object Optimize extends RuleExecutor[LogicalPlan] {
     val batches =
       Batch("AnalysisNodes", Once,
-        EliminateSubqueryAliases) ::
+        EliminateSubQueries) ::
       Batch("Constant Folding", FixedPoint(50),
         NullPropagation,
         ConstantFolding,
         BooleanSimplification,
-        PruneFilters) :: Nil
+        SimplifyFilters) :: Nil
   }
 
   val testRelation = LocalRelation('a.int, 'b.int, 'c.int, 'd.string)
@@ -81,67 +80,33 @@ class BooleanSimplificationSuite extends PlanTest with PredicateHelper {
 
     checkCondition(('a < 2 || 'a > 3 || 'b > 5) && 'a < 2, 'a < 2)
 
-    checkCondition('a < 2 && ('a < 2 || 'a > 3 || 'b > 5), 'a < 2)
+    checkCondition('a < 2 && ('a < 2 || 'a > 3 || 'b > 5) , 'a < 2)
 
     checkCondition(('a < 2 || 'b > 3) && ('a < 2 || 'c > 5), 'a < 2 || ('b > 3 && 'c > 5))
 
     checkCondition(
       ('a === 'b || 'b > 3) && ('a === 'b || 'a > 3) && ('a === 'b || 'a < 5),
-      'a === 'b || 'b > 3 && 'a > 3 && 'a < 5)
+      ('a === 'b || 'b > 3 && 'a > 3 && 'a < 5))
   }
 
   test("a && (!a || b)") {
-    checkCondition('a && (!'a || 'b ), 'a && 'b)
+    checkCondition(('a && (!('a) || 'b )), ('a && 'b))
 
-    checkCondition('a && ('b || !'a ), 'a && 'b)
+    checkCondition(('a && ('b || !('a) )), ('a && 'b))
 
-    checkCondition((!'a || 'b ) && 'a, 'b && 'a)
+    checkCondition(((!('a) || 'b ) && 'a), ('b && 'a))
 
-    checkCondition(('b || !'a ) && 'a, 'b && 'a)
+    checkCondition((('b || !('a) ) && 'a), ('b && 'a))
   }
 
-  test("a < 1 && (!(a < 1) || b)") {
-    checkCondition('a < 1 && (!('a < 1) || 'b), ('a < 1) && 'b)
-    checkCondition('a < 1 && ('b || !('a < 1)), ('a < 1) && 'b)
+  test("!(a && b) , !(a || b)") {
+    checkCondition((!('a && 'b)), (!('a) || !('b)))
 
-    checkCondition('a <= 1 && (!('a <= 1) || 'b), ('a <= 1) && 'b)
-    checkCondition('a <= 1 && ('b || !('a <= 1)), ('a <= 1) && 'b)
-
-    checkCondition('a > 1 && (!('a > 1) || 'b), ('a > 1) && 'b)
-    checkCondition('a > 1 && ('b || !('a > 1)), ('a > 1) && 'b)
-
-    checkCondition('a >= 1 && (!('a >= 1) || 'b), ('a >= 1) && 'b)
-    checkCondition('a >= 1 && ('b || !('a >= 1)), ('a >= 1) && 'b)
+    checkCondition(!('a || 'b), (!('a) && !('b)))
   }
 
-  test("a < 1 && ((a >= 1) || b)") {
-    checkCondition('a < 1 && ('a >= 1 || 'b ), ('a < 1) && 'b)
-    checkCondition('a < 1 && ('b || 'a >= 1), ('a < 1) && 'b)
-
-    checkCondition('a <= 1 && ('a > 1 || 'b ), ('a <= 1) && 'b)
-    checkCondition('a <= 1 && ('b || 'a > 1), ('a <= 1) && 'b)
-
-    checkCondition('a > 1 && (('a <= 1) || 'b), ('a > 1) && 'b)
-    checkCondition('a > 1 && ('b || ('a <= 1)), ('a > 1) && 'b)
-
-    checkCondition('a >= 1 && (('a < 1) || 'b), ('a >= 1) && 'b)
-    checkCondition('a >= 1 && ('b || ('a < 1)), ('a >= 1) && 'b)
-  }
-
-  test("DeMorgan's law") {
-    checkCondition(!('a && 'b), !'a || !'b)
-
-    checkCondition(!('a || 'b), !'a && !'b)
-
-    checkCondition(!(('a && 'b) || ('c && 'd)), (!'a || !'b) && (!'c || !'d))
-
-    checkCondition(!(('a || 'b) && ('c || 'd)), (!'a && !'b) || (!'c && !'d))
-  }
-
-  private val caseInsensitiveConf = new SimpleCatalystConf(false)
-  private val caseInsensitiveAnalyzer = new Analyzer(
-    new SessionCatalog(new InMemoryCatalog, EmptyFunctionRegistry, caseInsensitiveConf),
-    caseInsensitiveConf)
+  private val caseInsensitiveAnalyzer =
+    new Analyzer(EmptyCatalog, EmptyFunctionRegistry, new SimpleCatalystConf(false))
 
   test("(a && b) || (a && c) => a && (b || c) when case insensitive") {
     val plan = caseInsensitiveAnalyzer.execute(

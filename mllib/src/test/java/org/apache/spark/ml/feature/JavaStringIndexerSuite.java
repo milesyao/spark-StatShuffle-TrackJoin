@@ -20,44 +20,59 @@ package org.apache.spark.ml.feature;
 import java.util.Arrays;
 import java.util.List;
 
-import static org.apache.spark.sql.types.DataTypes.*;
-
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
-import org.apache.spark.SharedSparkSession;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import static org.apache.spark.sql.types.DataTypes.*;
 
-public class JavaStringIndexerSuite extends SharedSparkSession {
+public class JavaStringIndexerSuite {
+  private transient JavaSparkContext jsc;
+  private transient SQLContext sqlContext;
+
+  @Before
+  public void setUp() {
+    jsc = new JavaSparkContext("local", "JavaStringIndexerSuite");
+    sqlContext = new SQLContext(jsc);
+  }
+
+  @After
+  public void tearDown() {
+    jsc.stop();
+    sqlContext = null;
+  }
 
   @Test
   public void testStringIndexer() {
-    StructType schema = createStructType(new StructField[]{
+    StructType schema = createStructType(new StructField[] {
       createStructField("id", IntegerType, false),
       createStructField("label", StringType, false)
     });
     List<Row> data = Arrays.asList(
-      cr(0, "a"), cr(1, "b"), cr(2, "c"), cr(3, "a"), cr(4, "a"), cr(5, "c"));
-    Dataset<Row> dataset = spark.createDataFrame(data, schema);
+      c(0, "a"), c(1, "b"), c(2, "c"), c(3, "a"), c(4, "a"), c(5, "c"));
+    DataFrame dataset = sqlContext.createDataFrame(data, schema);
 
     StringIndexer indexer = new StringIndexer()
       .setInputCol("label")
       .setOutputCol("labelIndex");
-    Dataset<Row> output = indexer.fit(dataset).transform(dataset);
+    DataFrame output = indexer.fit(dataset).transform(dataset);
 
-    Assert.assertEquals(
-      Arrays.asList(cr(0, 0.0), cr(1, 2.0), cr(2, 1.0), cr(3, 0.0), cr(4, 0.0), cr(5, 1.0)),
-      output.orderBy("id").select("id", "labelIndex").collectAsList());
+    Assert.assertArrayEquals(
+      new Row[] { c(0, 0.0), c(1, 2.0), c(2, 1.0), c(3, 0.0), c(4, 0.0), c(5, 1.0) },
+      output.orderBy("id").select("id", "labelIndex").collect());
   }
 
-  /**
-   * An alias for RowFactory.create.
-   */
-  private Row cr(Object... values) {
+  /** An alias for RowFactory.create. */
+  private Row c(Object... values) {
     return RowFactory.create(values);
   }
 }

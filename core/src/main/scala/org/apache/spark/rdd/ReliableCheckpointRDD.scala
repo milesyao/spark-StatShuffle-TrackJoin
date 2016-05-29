@@ -26,7 +26,6 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.internal.Logging
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
@@ -175,8 +174,7 @@ private[spark] object ReliableCheckpointRDD extends Logging {
       fs.create(tempOutputPath, false, bufferSize)
     } else {
       // This is mainly for testing purpose
-      fs.create(tempOutputPath, false, bufferSize,
-        fs.getDefaultReplication(fs.getWorkingDirectory), blockSize)
+      fs.create(tempOutputPath, false, bufferSize, fs.getDefaultReplication, blockSize)
     }
     val serializer = env.serializer.newInstance()
     val serializeStream = serializer.serializeStream(fileOutputStream)

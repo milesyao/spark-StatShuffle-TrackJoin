@@ -26,9 +26,6 @@ import org.apache.spark.sql.types._
  *
  * Code generation inherited from BinaryArithmetic.
  */
-@ExpressionDescription(
-  usage = "a _FUNC_ b - Bitwise AND.",
-  extended = "> SELECT 3 _FUNC_ 5; 1")
 case class BitwiseAnd(left: Expression, right: Expression) extends BinaryArithmetic {
 
   override def inputType: AbstractDataType = IntegralType
@@ -54,9 +51,6 @@ case class BitwiseAnd(left: Expression, right: Expression) extends BinaryArithme
  *
  * Code generation inherited from BinaryArithmetic.
  */
-@ExpressionDescription(
-  usage = "a _FUNC_ b - Bitwise OR.",
-  extended = "> SELECT 3 _FUNC_ 5; 7")
 case class BitwiseOr(left: Expression, right: Expression) extends BinaryArithmetic {
 
   override def inputType: AbstractDataType = IntegralType
@@ -82,9 +76,6 @@ case class BitwiseOr(left: Expression, right: Expression) extends BinaryArithmet
  *
  * Code generation inherited from BinaryArithmetic.
  */
-@ExpressionDescription(
-  usage = "a _FUNC_ b - Bitwise exclusive OR.",
-  extended = "> SELECT 3 _FUNC_ 5; 2")
 case class BitwiseXor(left: Expression, right: Expression) extends BinaryArithmetic {
 
   override def inputType: AbstractDataType = IntegralType
@@ -108,9 +99,6 @@ case class BitwiseXor(left: Expression, right: Expression) extends BinaryArithme
 /**
  * A function that calculates bitwise not(~) of a number.
  */
-@ExpressionDescription(
-  usage = "_FUNC_ b - Bitwise NOT.",
-  extended = "> SELECT _FUNC_ 0; -1")
 case class BitwiseNot(child: Expression) extends UnaryExpression with ExpectsInputTypes {
 
   override def inputTypes: Seq[AbstractDataType] = Seq(IntegralType)
@@ -130,11 +118,9 @@ case class BitwiseNot(child: Expression) extends UnaryExpression with ExpectsInp
       ((evalE: Long) => ~evalE).asInstanceOf[(Any) => Any]
   }
 
-  override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+  override def genCode(ctx: CodeGenContext, ev: GeneratedExpressionCode): String = {
     defineCodeGen(ctx, ev, c => s"(${ctx.javaType(dataType)}) ~($c)")
   }
 
   protected override def nullSafeEval(input: Any): Any = not(input)
-
-  override def sql: String = s"~${child.sql}"
 }

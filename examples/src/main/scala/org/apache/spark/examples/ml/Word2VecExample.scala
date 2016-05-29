@@ -21,18 +21,18 @@ package org.apache.spark.examples.ml
 // $example on$
 import org.apache.spark.ml.feature.Word2Vec
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object Word2VecExample {
   def main(args: Array[String]) {
-    val spark = SparkSession
-      .builder
-      .appName("Word2Vec example")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("Word2Vec example")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
     // Input data: Each row is a bag of words from a sentence or document.
-    val documentDF = spark.createDataFrame(Seq(
+    val documentDF = sqlContext.createDataFrame(Seq(
       "Hi I heard about Spark".split(" "),
       "I wish Java could use case classes".split(" "),
       "Logistic regression models are neat".split(" ")
@@ -48,8 +48,6 @@ object Word2VecExample {
     val result = model.transform(documentDF)
     result.select("result").take(3).foreach(println)
     // $example off$
-
-    spark.stop()
   }
 }
 // scalastyle:on println

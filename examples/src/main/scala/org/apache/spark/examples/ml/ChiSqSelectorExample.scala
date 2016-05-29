@@ -20,17 +20,18 @@ package org.apache.spark.examples.ml
 
 // $example on$
 import org.apache.spark.ml.feature.ChiSqSelector
-import org.apache.spark.ml.linalg.Vectors
+import org.apache.spark.mllib.linalg.Vectors
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object ChiSqSelectorExample {
   def main(args: Array[String]) {
-    val spark = SparkSession
-      .builder
-      .appName("ChiSqSelectorExample")
-      .getOrCreate()
-    import spark.implicits._
+    val conf = new SparkConf().setAppName("ChiSqSelectorExample")
+    val sc = new SparkContext(conf)
+
+    val sqlContext = SQLContext.getOrCreate(sc)
+    import sqlContext.implicits._
 
     // $example on$
     val data = Seq(
@@ -39,7 +40,7 @@ object ChiSqSelectorExample {
       (9, Vectors.dense(1.0, 0.0, 15.0, 0.1), 0.0)
     )
 
-    val df = spark.createDataset(data).toDF("id", "features", "clicked")
+    val df = sc.parallelize(data).toDF("id", "features", "clicked")
 
     val selector = new ChiSqSelector()
       .setNumTopFeatures(1)
@@ -50,7 +51,7 @@ object ChiSqSelectorExample {
     val result = selector.fit(df).transform(df)
     result.show()
     // $example off$
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

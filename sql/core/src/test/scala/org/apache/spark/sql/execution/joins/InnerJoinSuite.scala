@@ -17,22 +17,19 @@
 
 package org.apache.spark.sql.execution.joins
 
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.sql.{DataFrame, execution, Row, SQLConf}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.planning.ExtractEquiJoinKeys
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.logical.Join
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.exchange.EnsureRequirements
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
 class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
-  import testImplicits.newProductEncoder
-  import testImplicits.localSeqToDatasetHolder
+  import testImplicits.localSeqToDataFrameHolder
 
-  private lazy val myUpperCaseData = spark.createDataFrame(
+  private lazy val myUpperCaseData = sqlContext.createDataFrame(
     sparkContext.parallelize(Seq(
       Row(1, "A"),
       Row(2, "B"),
@@ -43,7 +40,7 @@ class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
       Row(null, "G")
     )), new StructType().add("N", IntegerType).add("L", StringType))
 
-  private lazy val myLowerCaseData = spark.createDataFrame(
+  private lazy val myLowerCaseData = sqlContext.createDataFrame(
     sparkContext.parallelize(Seq(
       Row(1, "a"),
       Row(2, "b"),
@@ -91,29 +88,9 @@ class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
         leftPlan: SparkPlan,
         rightPlan: SparkPlan,
         side: BuildSide) = {
-      val broadcastJoin = joins.BroadcastHashJoinExec(
-        leftKeys,
-        rightKeys,
-        Inner,
-        side,
-        boundCondition,
-        leftPlan,
-        rightPlan)
-      EnsureRequirements(spark.sessionState.conf).apply(broadcastJoin)
-    }
-
-    def makeShuffledHashJoin(
-        leftKeys: Seq[Expression],
-        rightKeys: Seq[Expression],
-        boundCondition: Option[Expression],
-        leftPlan: SparkPlan,
-        rightPlan: SparkPlan,
-        side: BuildSide) = {
-      val shuffledHashJoin =
-        joins.ShuffledHashJoinExec(leftKeys, rightKeys, Inner, side, None, leftPlan, rightPlan)
-      val filteredJoin =
-        boundCondition.map(FilterExec(_, shuffledHashJoin)).getOrElse(shuffledHashJoin)
-      EnsureRequirements(spark.sessionState.conf).apply(filteredJoin)
+      val broadcastHashJoin =
+        execution.joins.BroadcastHashJoin(leftKeys, rightKeys, side, leftPlan, rightPlan)
+      boundCondition.map(Filter(_, broadcastHashJoin)).getOrElse(broadcastHashJoin)
     }
 
     def makeSortMergeJoin(
@@ -123,8 +100,9 @@ class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
         leftPlan: SparkPlan,
         rightPlan: SparkPlan) = {
       val sortMergeJoin =
-        joins.SortMergeJoinExec(leftKeys, rightKeys, Inner, boundCondition, leftPlan, rightPlan)
-      EnsureRequirements(spark.sessionState.conf).apply(sortMergeJoin)
+        execution.joins.SortMergeJoin(leftKeys, rightKeys, leftPlan, rightPlan)
+      val filteredJoin = boundCondition.map(Filter(_, sortMergeJoin)).getOrElse(sortMergeJoin)
+      EnsureRequirements(sqlContext).apply(filteredJoin)
     }
 
     test(s"$testName using BroadcastHashJoin (build=left)") {
@@ -151,30 +129,6 @@ class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
       }
     }
 
-    test(s"$testName using ShuffledHashJoin (build=left)") {
-      extractJoinParts().foreach { case (_, leftKeys, rightKeys, boundCondition, _, _) =>
-        withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
-          checkAnswer2(leftRows, rightRows, (leftPlan: SparkPlan, rightPlan: SparkPlan) =>
-            makeShuffledHashJoin(
-              leftKeys, rightKeys, boundCondition, leftPlan, rightPlan, joins.BuildLeft),
-            expectedAnswer.map(Row.fromTuple),
-            sortAnswers = true)
-        }
-      }
-    }
-
-    test(s"$testName using ShuffledHashJoin (build=right)") {
-      extractJoinParts().foreach { case (_, leftKeys, rightKeys, boundCondition, _, _) =>
-        withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
-          checkAnswer2(leftRows, rightRows, (leftPlan: SparkPlan, rightPlan: SparkPlan) =>
-            makeShuffledHashJoin(
-              leftKeys, rightKeys, boundCondition, leftPlan, rightPlan, joins.BuildRight),
-            expectedAnswer.map(Row.fromTuple),
-            sortAnswers = true)
-        }
-      }
-    }
-
     test(s"$testName using SortMergeJoin") {
       extractJoinParts().foreach { case (_, leftKeys, rightKeys, boundCondition, _, _) =>
         withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
@@ -183,34 +137,6 @@ class InnerJoinSuite extends SparkPlanTest with SharedSQLContext {
             expectedAnswer.map(Row.fromTuple),
             sortAnswers = true)
         }
-      }
-    }
-
-    test(s"$testName using CartesianProduct") {
-      withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1",
-        SQLConf.CROSS_JOINS_ENABLED.key -> "true") {
-        checkAnswer2(leftRows, rightRows, (left: SparkPlan, right: SparkPlan) =>
-          CartesianProductExec(left, right, Some(condition())),
-          expectedAnswer.map(Row.fromTuple),
-          sortAnswers = true)
-      }
-    }
-
-    test(s"$testName using BroadcastNestedLoopJoin build left") {
-      withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
-        checkAnswer2(leftRows, rightRows, (left: SparkPlan, right: SparkPlan) =>
-          BroadcastNestedLoopJoinExec(left, right, BuildLeft, Inner, Some(condition())),
-          expectedAnswer.map(Row.fromTuple),
-          sortAnswers = true)
-      }
-    }
-
-    test(s"$testName using BroadcastNestedLoopJoin build right") {
-      withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
-        checkAnswer2(leftRows, rightRows, (left: SparkPlan, right: SparkPlan) =>
-          BroadcastNestedLoopJoinExec(left, right, BuildRight, Inner, Some(condition())),
-          expectedAnswer.map(Row.fromTuple),
-          sortAnswers = true)
       }
     }
   }

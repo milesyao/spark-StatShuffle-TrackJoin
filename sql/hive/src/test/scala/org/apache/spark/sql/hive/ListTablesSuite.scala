@@ -19,10 +19,10 @@ package org.apache.spark.sql.hive
 
 import org.scalatest.BeforeAndAfterAll
 
+import org.apache.spark.sql.hive.test.TestHiveSingleton
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.hive.test.TestHiveSingleton
 
 class ListTablesSuite extends QueryTest with TestHiveSingleton with BeforeAndAfterAll {
   import hiveContext._
@@ -31,25 +31,18 @@ class ListTablesSuite extends QueryTest with TestHiveSingleton with BeforeAndAft
   val df = sparkContext.parallelize((1 to 10).map(i => (i, s"str$i"))).toDF("key", "value")
 
   override def beforeAll(): Unit = {
-    super.beforeAll()
     // The catalog in HiveContext is a case insensitive one.
-    sessionState.catalog.createTempView(
-      "ListTablesSuiteTable", df.logicalPlan, overrideIfExists = true)
+    catalog.registerTable(TableIdentifier("ListTablesSuiteTable"), df.logicalPlan)
     sql("CREATE TABLE HiveListTablesSuiteTable (key int, value string)")
     sql("CREATE DATABASE IF NOT EXISTS ListTablesSuiteDB")
     sql("CREATE TABLE ListTablesSuiteDB.HiveInDBListTablesSuiteTable (key int, value string)")
   }
 
   override def afterAll(): Unit = {
-    try {
-      sessionState.catalog.dropTable(
-        TableIdentifier("ListTablesSuiteTable"), ignoreIfNotExists = true)
-      sql("DROP TABLE IF EXISTS HiveListTablesSuiteTable")
-      sql("DROP TABLE IF EXISTS ListTablesSuiteDB.HiveInDBListTablesSuiteTable")
-      sql("DROP DATABASE IF EXISTS ListTablesSuiteDB")
-    } finally {
-      super.afterAll()
-    }
+    catalog.unregisterTable(TableIdentifier("ListTablesSuiteTable"))
+    sql("DROP TABLE IF EXISTS HiveListTablesSuiteTable")
+    sql("DROP TABLE IF EXISTS ListTablesSuiteDB.HiveInDBListTablesSuiteTable")
+    sql("DROP DATABASE IF EXISTS ListTablesSuiteDB")
   }
 
   test("get all tables of current database") {

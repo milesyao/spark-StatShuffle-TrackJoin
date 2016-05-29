@@ -355,21 +355,11 @@ def standardize_jira_ref(text):
 
     return clean_text
 
-
-def get_current_ref():
-    ref = run_cmd("git rev-parse --abbrev-ref HEAD").strip()
-    if ref == 'HEAD':
-        # The current ref is a detached HEAD, so grab its SHA.
-        return run_cmd("git rev-parse HEAD").strip()
-    else:
-        return ref
-
-
 def main():
     global original_head
 
     os.chdir(SPARK_HOME)
-    original_head = get_current_ref()
+    original_head = run_cmd("git rev-parse HEAD")[:8]
 
     branches = get_json("%s/branches" % GITHUB_API_BASE)
     branch_names = filter(lambda x: x.startswith("branch-"), [x['name'] for x in branches])
@@ -459,8 +449,5 @@ if __name__ == "__main__":
     (failure_count, test_count) = doctest.testmod()
     if failure_count:
         exit(-1)
-    try:
-        main()
-    except:
-        clean_up()
-        raise
+
+    main()

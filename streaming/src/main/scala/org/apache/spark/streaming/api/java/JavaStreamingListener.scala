@@ -18,6 +18,7 @@
 package org.apache.spark.streaming.api.java
 
 import org.apache.spark.streaming.Time
+import org.apache.spark.streaming.scheduler.StreamingListener
 
 private[streaming] trait PythonStreamingListener{
 

@@ -18,12 +18,13 @@
 package org.apache.spark.mllib.optimization
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 import breeze.linalg.{DenseVector => BDV}
 import breeze.optimize.{CachedDiffFunction, DiffFunction, LBFGS => BreezeLBFGS}
 
+import org.apache.spark.Logging
 import org.apache.spark.annotation.DeveloperApi
-import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.mllib.linalg.BLAS.axpy
 import org.apache.spark.rdd.RDD
@@ -40,7 +41,7 @@ class LBFGS(private var gradient: Gradient, private var updater: Updater)
   extends Optimizer with Logging {
 
   private var numCorrections = 10
-  private var convergenceTol = 1E-6
+  private var convergenceTol = 1E-4
   private var maxNumIterations = 100
   private var regParam = 0.0
 
@@ -52,64 +53,45 @@ class LBFGS(private var gradient: Gradient, private var updater: Updater)
    * Restriction: numCorrections > 0
    */
   def setNumCorrections(corrections: Int): this.type = {
-    require(corrections > 0,
-      s"Number of corrections must be positive but got ${corrections}")
+    assert(corrections > 0)
     this.numCorrections = corrections
     this
   }
 
   /**
-   * Set the convergence tolerance of iterations for L-BFGS. Default 1E-6.
+   * Set the convergence tolerance of iterations for L-BFGS. Default 1E-4.
    * Smaller value will lead to higher accuracy with the cost of more iterations.
    * This value must be nonnegative. Lower convergence values are less tolerant
    * and therefore generally cause more iterations to be run.
    */
   def setConvergenceTol(tolerance: Double): this.type = {
-    require(tolerance >= 0,
-      s"Convergence tolerance must be nonnegative but got ${tolerance}")
     this.convergenceTol = tolerance
     this
   }
 
-  /*
-   * Get the convergence tolerance of iterations.
+  /**
+   * Set the maximal number of iterations for L-BFGS. Default 100.
+   * @deprecated use [[LBFGS#setNumIterations]] instead
    */
-  private[mllib] def getConvergenceTol(): Double = {
-    this.convergenceTol
+  @deprecated("use setNumIterations instead", "1.1.0")
+  def setMaxNumIterations(iters: Int): this.type = {
+    this.setNumIterations(iters)
   }
 
   /**
    * Set the maximal number of iterations for L-BFGS. Default 100.
    */
   def setNumIterations(iters: Int): this.type = {
-    require(iters >= 0,
-      s"Maximum of iterations must be nonnegative but got ${iters}")
     this.maxNumIterations = iters
     this
-  }
-
-  /**
-   * Get the maximum number of iterations for L-BFGS. Defaults to 100.
-   */
-  private[mllib] def getNumIterations(): Int = {
-    this.maxNumIterations
   }
 
   /**
    * Set the regularization parameter. Default 0.0.
    */
   def setRegParam(regParam: Double): this.type = {
-    require(regParam >= 0,
-      s"Regularization parameter must be nonnegative but got ${regParam}")
     this.regParam = regParam
     this
-  }
-
-  /**
-   * Get the regularization parameter.
-   */
-  private[mllib] def getRegParam(): Double = {
-    this.regParam
   }
 
   /**
@@ -129,13 +111,6 @@ class LBFGS(private var gradient: Gradient, private var updater: Updater)
   def setUpdater(updater: Updater): this.type = {
     this.updater = updater
     this
-  }
-
-  /**
-   * Returns the updater, limited to internal use.
-   */
-  private[mllib] def getUpdater(): Updater = {
-    updater
   }
 
   override def optimize(data: RDD[(Double, Vector)], initialWeights: Vector): Vector = {

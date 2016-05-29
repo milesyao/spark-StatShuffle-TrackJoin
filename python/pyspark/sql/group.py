@@ -74,11 +74,11 @@ class GroupedData(object):
             or a list of :class:`Column`.
 
         >>> gdf = df.groupBy(df.name)
-        >>> sorted(gdf.agg({"*": "count"}).collect())
+        >>> gdf.agg({"*": "count"}).collect()
         [Row(name=u'Alice', count(1)=1), Row(name=u'Bob', count(1)=1)]
 
         >>> from pyspark.sql import functions as F
-        >>> sorted(gdf.agg(F.min(df.age)).collect())
+        >>> gdf.agg(F.min(df.age)).collect()
         [Row(name=u'Alice', min(age)=2), Row(name=u'Bob', min(age)=5)]
         """
         assert exprs, "exprs should not be empty"
@@ -96,7 +96,7 @@ class GroupedData(object):
     def count(self):
         """Counts the number of records for each group.
 
-        >>> sorted(df.groupBy(df.age).count().collect())
+        >>> df.groupBy(df.age).count().collect()
         [Row(age=2, count=1), Row(age=5, count=1)]
         """
 
@@ -195,15 +195,13 @@ class GroupedData(object):
 
 def _test():
     import doctest
-    from pyspark.sql import Row, SparkSession
+    from pyspark.context import SparkContext
+    from pyspark.sql import Row, SQLContext
     import pyspark.sql.group
     globs = pyspark.sql.group.__dict__.copy()
-    spark = SparkSession.builder\
-        .master("local[4]")\
-        .appName("sql.group tests")\
-        .getOrCreate()
-    sc = spark.sparkContext
+    sc = SparkContext('local[4]', 'PythonTest')
     globs['sc'] = sc
+    globs['sqlContext'] = SQLContext(sc)
     globs['df'] = sc.parallelize([(2, 'Alice'), (5, 'Bob')]) \
         .toDF(StructType([StructField('age', IntegerType()),
                           StructField('name', StringType())]))
@@ -218,7 +216,7 @@ def _test():
     (failure_count, test_count) = doctest.testmod(
         pyspark.sql.group, globs=globs,
         optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE | doctest.REPORT_NDIFF)
-    spark.stop()
+    globs['sc'].stop()
     if failure_count:
         exit(-1)
 

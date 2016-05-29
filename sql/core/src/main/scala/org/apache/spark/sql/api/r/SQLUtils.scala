@@ -19,22 +19,20 @@ package org.apache.spark.sql.api.r
 
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, DataOutputStream}
 
-import scala.collection.JavaConverters._
-import scala.util.matching.Regex
-
 import org.apache.spark.api.java.{JavaRDD, JavaSparkContext}
 import org.apache.spark.api.r.SerDe
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, Row, SaveMode, SQLContext}
-import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
+import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, NamedExpression, GenericRowWithSchema}
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.{Column, DataFrame, GroupedData, Row, SQLContext, SaveMode}
 
-private[sql] object SQLUtils {
+import scala.util.matching.Regex
+
+private[r] object SQLUtils {
   SerDe.registerSqlSerDe((readSqlObject, writeSqlObject))
 
   def createSQLContext(jsc: JavaSparkContext): SQLContext = {
-    SQLContext.getOrCreate(jsc.sc)
+    new SQLContext(jsc)
   }
 
   def getJavaSparkContext(sqlCtx: SQLContext): JavaSparkContext = {
@@ -74,7 +72,7 @@ private[sql] object SQLUtils {
         org.apache.spark.sql.types.MapType(getSQLDataType(keyType), getSQLDataType(valueType))
       case r"\Astruct<(.+)${fieldsStr}>\Z" =>
         if (fieldsStr(fieldsStr.length - 1) == ',') {
-          throw new IllegalArgumentException(s"Invalid type $dataType")
+          throw new IllegalArgumentException(s"Invaid type $dataType")
         }
         val fields = fieldsStr.split(",")
         val structFields = fields.map { field =>
@@ -82,11 +80,11 @@ private[sql] object SQLUtils {
             case r"\A(.+)${fieldName}:(.+)${fieldType}\Z" =>
               createStructField(fieldName, fieldType, true)
 
-            case _ => throw new IllegalArgumentException(s"Invalid type $dataType")
+            case _ => throw new IllegalArgumentException(s"Invaid type $dataType")
           }
         }
         createStructType(structFields)
-      case _ => throw new IllegalArgumentException(s"Invalid type $dataType")
+      case _ => throw new IllegalArgumentException(s"Invaid type $dataType")
     }
   }
 
@@ -96,64 +94,39 @@ private[sql] object SQLUtils {
   }
 
   def createDF(rdd: RDD[Array[Byte]], schema: StructType, sqlContext: SQLContext): DataFrame = {
-    val num = schema.fields.length
+    val num = schema.fields.size
     val rowRDD = rdd.map(bytesToRow(_, schema))
     sqlContext.createDataFrame(rowRDD, schema)
   }
 
   def dfToRowRDD(df: DataFrame): JavaRDD[Array[Byte]] = {
-    df.rdd.map(r => rowToRBytes(r))
+    df.map(r => rowToRBytes(r))
   }
 
   private[this] def doConversion(data: Object, dataType: DataType): Object = {
     data match {
       case d: java.lang.Double if dataType == FloatType =>
         new java.lang.Float(d)
-      // Scala Map is the only allowed external type of map type in Row.
-      case m: java.util.Map[_, _] => m.asScala
       case _ => data
     }
   }
 
-  private[sql] def bytesToRow(bytes: Array[Byte], schema: StructType): Row = {
+  private[this] def bytesToRow(bytes: Array[Byte], schema: StructType): Row = {
     val bis = new ByteArrayInputStream(bytes)
     val dis = new DataInputStream(bis)
     val num = SerDe.readInt(dis)
     Row.fromSeq((0 until num).map { i =>
       doConversion(SerDe.readObject(dis), schema.fields(i).dataType)
-    })
+    }.toSeq)
   }
 
-  private[sql] def rowToRBytes(row: Row): Array[Byte] = {
+  private[this] def rowToRBytes(row: Row): Array[Byte] = {
     val bos = new ByteArrayOutputStream()
     val dos = new DataOutputStream(bos)
 
     val cols = (0 until row.length).map(row(_).asInstanceOf[Object]).toArray
     SerDe.writeObject(dos, cols)
     bos.toByteArray()
-  }
-
-  // Schema for DataFrame of serialized R data
-  // TODO: introduce a user defined type for serialized R data.
-  val SERIALIZED_R_DATA_SCHEMA = StructType(Seq(StructField("R", BinaryType)))
-
-  /**
-   * The helper function for dapply() on R side.
-   */
-  def dapply(
-      df: DataFrame,
-      func: Array[Byte],
-      packageNames: Array[Byte],
-      broadcastVars: Array[Object],
-      schema: StructType): DataFrame = {
-    val bv = broadcastVars.map(x => x.asInstanceOf[Broadcast[Object]])
-    val realSchema =
-      if (schema == null) {
-        SERIALIZED_R_DATA_SCHEMA
-      } else {
-        schema
-      }
-    df.mapPartitionsInR(func, packageNames, bv, realSchema)
   }
 
   def dfToCols(df: DataFrame): Array[Array[Any]] = {

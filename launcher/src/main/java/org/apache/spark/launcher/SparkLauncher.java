@@ -40,9 +40,6 @@ public class SparkLauncher {
   /** The Spark master. */
   public static final String SPARK_MASTER = "spark.master";
 
-  /** The Spark deploy mode. */
-  public static final String DEPLOY_MODE = "spark.submit.deployMode";
-
   /** Configuration key for the driver memory. */
   public static final String DRIVER_MEMORY = "spark.driver.memory";
   /** Configuration key for the driver class path. */
@@ -67,13 +64,6 @@ public class SparkLauncher {
   public static final String CHILD_PROCESS_LOGGER_NAME = "spark.launcher.childProcLoggerName";
 
   /**
-   * A special value for the resource that tells Spark to not try to process the app resource as a
-   * file. This is useful when the class being executed is added to the application using other
-   * means - for example, by adding jars using the package download feature.
-   */
-  public static final String NO_RESOURCE = "spark-internal";
-
-  /**
    * Maximum time (in ms) to wait for a child process to connect back to the launcher server
    * when using @link{#start()}.
    */
@@ -82,7 +72,7 @@ public class SparkLauncher {
   /** Used internally to create unique logger names. */
   private static final AtomicInteger COUNTER = new AtomicInteger();
 
-  static final Map<String, String> launcherConfig = new HashMap<>();
+  static final Map<String, String> launcherConfig = new HashMap<String, String>();
 
   /**
    * Set a configuration value for the launcher library. These config values do not affect the
@@ -435,7 +425,7 @@ public class SparkLauncher {
   }
 
   private ProcessBuilder createBuilder() {
-    List<String> cmd = new ArrayList<>();
+    List<String> cmd = new ArrayList<String>();
     String script = isWindows() ? "spark-submit.cmd" : "spark-submit";
     cmd.add(join(File.separator, builder.getSparkHome(), "bin", script));
     cmd.addAll(builder.buildSparkSubmitArgs());
@@ -444,7 +434,7 @@ public class SparkLauncher {
     // preserved, otherwise the batch interpreter will mess up the arguments. Batch scripts are
     // weird.
     if (isWindows()) {
-      List<String> winCmd = new ArrayList<>();
+      List<String> winCmd = new ArrayList<String>();
       for (String arg : cmd) {
         winCmd.add(quoteForBatchScript(arg));
       }
@@ -484,6 +474,6 @@ public class SparkLauncher {
       // No op.
     }
 
-  }
+  };
 
 }

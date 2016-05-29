@@ -17,20 +17,20 @@
 
 package org.apache.spark.sql.execution
 
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream, File}
-import java.util.Properties
+import java.io.{File, ByteArrayInputStream, ByteArrayOutputStream}
 
-import org.apache.spark._
-import org.apache.spark.executor.TaskMetrics
+import org.apache.spark.executor.ShuffleWriteMetrics
 import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.rdd.RDD
+import org.apache.spark.storage.ShuffleBlockId
+import org.apache.spark.util.collection.ExternalSorter
+import org.apache.spark.util.Utils
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
 import org.apache.spark.sql.catalyst.expressions.{UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.types._
-import org.apache.spark.storage.ShuffleBlockId
-import org.apache.spark.util.collection.ExternalSorter
-import org.apache.spark.util.Utils
+import org.apache.spark._
+
 
 /**
  * used to test close InputStream in UnsafeRowSerializer
@@ -114,12 +114,13 @@ class UnsafeRowSerializerSuite extends SparkFunSuite with LocalSparkContext {
         (i, converter(Row(i)))
       }
       val taskMemoryManager = new TaskMemoryManager(sc.env.memoryManager, 0)
-      val taskContext = new TaskContextImpl(0, 0, 0, 0, taskMemoryManager, new Properties, null)
+      val taskContext = new TaskContextImpl(
+        0, 0, 0, 0, taskMemoryManager, null, InternalAccumulator.create(sc))
 
       val sorter = new ExternalSorter[Int, UnsafeRow, UnsafeRow](
         taskContext,
         partitioner = Some(new HashPartitioner(10)),
-        serializer = new UnsafeRowSerializer(numFields = 1))
+        serializer = Some(new UnsafeRowSerializer(numFields = 1)))
 
       // Ensure we spilled something and have to merge them later
       assert(sorter.numSpills === 0)
@@ -127,6 +128,7 @@ class UnsafeRowSerializerSuite extends SparkFunSuite with LocalSparkContext {
       assert(sorter.numSpills > 0)
 
       // Merging spilled files should not throw assertion error
+      taskContext.taskMetrics.shuffleWriteMetrics = Some(new ShuffleWriteMetrics)
       sorter.writePartitionedFile(ShuffleBlockId(0, 0, 0), outputFile)
     } {
       // Clean up
@@ -154,7 +156,7 @@ class UnsafeRowSerializerSuite extends SparkFunSuite with LocalSparkContext {
       new ShuffleDependency[Int, InternalRow, InternalRow](
         rowsRDD,
         new PartitionIdPassthrough(2),
-        new UnsafeRowSerializer(2))
+        Some(new UnsafeRowSerializer(2)))
     val shuffled = new ShuffledRowRDD(dependency)
     shuffled.count()
   }

@@ -19,15 +19,31 @@ package org.apache.spark.ml.feature;
 
 import java.util.Arrays;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
-import org.apache.spark.SharedSparkSession;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.mllib.linalg.Vectors;
 import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.ml.linalg.Vectors;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
+import org.apache.spark.sql.DataFrame;
+import org.apache.spark.sql.SQLContext;
 
-public class JavaNormalizerSuite extends SharedSparkSession {
+public class JavaNormalizerSuite {
+  private transient JavaSparkContext jsc;
+  private transient SQLContext jsql;
+
+  @Before
+  public void setUp() {
+    jsc = new JavaSparkContext("local", "JavaNormalizerSuite");
+    jsql = new SQLContext(jsc);
+  }
+
+  @After
+  public void tearDown() {
+    jsc.stop();
+    jsc = null;
+  }
 
   @Test
   public void normalizer() {
@@ -37,17 +53,17 @@ public class JavaNormalizerSuite extends SharedSparkSession {
       new VectorIndexerSuite.FeatureData(Vectors.dense(1.0, 3.0)),
       new VectorIndexerSuite.FeatureData(Vectors.dense(1.0, 4.0))
     ));
-    Dataset<Row> dataFrame = spark.createDataFrame(points, VectorIndexerSuite.FeatureData.class);
+    DataFrame dataFrame = jsql.createDataFrame(points, VectorIndexerSuite.FeatureData.class);
     Normalizer normalizer = new Normalizer()
       .setInputCol("features")
       .setOutputCol("normFeatures");
 
     // Normalize each Vector using $L^2$ norm.
-    Dataset<Row> l2NormData = normalizer.transform(dataFrame, normalizer.p().w(2));
+    DataFrame l2NormData = normalizer.transform(dataFrame, normalizer.p().w(2));
     l2NormData.count();
 
     // Normalize each Vector using $L^\infty$ norm.
-    Dataset<Row> lInfNormData =
+    DataFrame lInfNormData =
       normalizer.transform(dataFrame, normalizer.p().w(Double.POSITIVE_INFINITY));
     lInfNormData.count();
   }

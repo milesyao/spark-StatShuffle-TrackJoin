@@ -22,16 +22,15 @@ import java.util.concurrent.ConcurrentMap
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.{typeTag, TypeTag}
 
+import org.apache.spark.util.Utils
 import org.apache.spark.sql.{AnalysisException, Encoder}
-import org.apache.spark.sql.catalyst.{InternalRow, JavaTypeInference, ScalaReflection}
-import org.apache.spark.sql.catalyst.analysis.{SimpleAnalyzer, UnresolvedAttribute, UnresolvedDeserializer, UnresolvedExtractValue}
+import org.apache.spark.sql.catalyst.analysis.{SimpleAnalyzer, UnresolvedExtractValue, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.{GenerateSafeProjection, GenerateUnsafeProjection}
-import org.apache.spark.sql.catalyst.expressions.objects.{Invoke, NewInstance}
 import org.apache.spark.sql.catalyst.optimizer.SimplifyCasts
-import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
-import org.apache.spark.sql.types.{ObjectType, StructField, StructType}
-import org.apache.spark.util.Utils
+import org.apache.spark.sql.catalyst.{JavaTypeInference, InternalRow, ScalaReflection}
+import org.apache.spark.sql.types.{StructField, ObjectType, StructType}
 
 /**
  * A factory for constructing encoders that convert objects and primitives to and from the
@@ -48,13 +47,12 @@ object ExpressionEncoder {
   def apply[T : TypeTag](): ExpressionEncoder[T] = {
     // We convert the not-serializable TypeTag into StructType and ClassTag.
     val mirror = typeTag[T].mirror
-    val tpe = typeTag[T].tpe
-    val cls = mirror.runtimeClass(tpe)
-    val flat = !ScalaReflection.definedByConstructorParams(tpe)
+    val cls = mirror.runtimeClass(typeTag[T].tpe)
+    val flat = !classOf[Product].isAssignableFrom(cls)
 
-    val inputObject = BoundReference(0, ScalaReflection.dataTypeFor[T], nullable = false)
-    val serializer = ScalaReflection.serializerFor[T](inputObject)
-    val deserializer = ScalaReflection.deserializerFor[T]
+    val inputObject = BoundReference(0, ScalaReflection.dataTypeFor[T], nullable = true)
+    val toRowExpression = ScalaReflection.extractorsFor[T](inputObject)
+    val fromRowExpression = ScalaReflection.constructorFor[T]
 
     val schema = ScalaReflection.schemaFor[T] match {
       case ScalaReflection.Schema(s: StructType, _) => s
@@ -64,8 +62,8 @@ object ExpressionEncoder {
     new ExpressionEncoder[T](
       schema,
       flat,
-      serializer.flatten,
-      deserializer,
+      toRowExpression.flatten,
+      fromRowExpression,
       ClassTag[T](cls))
   }
 
@@ -74,14 +72,14 @@ object ExpressionEncoder {
     val schema = JavaTypeInference.inferDataType(beanClass)._1
     assert(schema.isInstanceOf[StructType])
 
-    val serializer = JavaTypeInference.serializerFor(beanClass)
-    val deserializer = JavaTypeInference.deserializerFor(beanClass)
+    val toRowExpression = JavaTypeInference.extractorsFor(beanClass)
+    val fromRowExpression = JavaTypeInference.constructorFor(beanClass)
 
     new ExpressionEncoder[T](
       schema.asInstanceOf[StructType],
       flat = false,
-      serializer.flatten,
-      deserializer,
+      toRowExpression.flatten,
+      fromRowExpression,
       ClassTag[T](beanClass))
   }
 
@@ -105,9 +103,9 @@ object ExpressionEncoder {
 
     val cls = Utils.getContextOrSparkClassLoader.loadClass(s"scala.Tuple${encoders.size}")
 
-    val serializer = encoders.map {
-      case e if e.flat => e.serializer.head
-      case other => CreateStruct(other.serializer)
+    val toRowExpressions = encoders.map {
+      case e if e.flat => e.toRowExpressions.head
+      case other => CreateStruct(other.toRowExpressions)
     }.zipWithIndex.map { case (expr, index) =>
       expr.transformUp {
         case BoundReference(0, t, _) =>
@@ -118,14 +116,14 @@ object ExpressionEncoder {
       }
     }
 
-    val childrenDeserializers = encoders.zipWithIndex.map { case (enc, index) =>
+    val fromRowExpressions = encoders.zipWithIndex.map { case (enc, index) =>
       if (enc.flat) {
-        enc.deserializer.transform {
+        enc.fromRowExpression.transform {
           case b: BoundReference => b.copy(ordinal = index)
         }
       } else {
         val input = BoundReference(index, enc.schema, nullable = true)
-        enc.deserializer.transformUp {
+        enc.fromRowExpression.transformUp {
           case UnresolvedAttribute(nameParts) =>
             assert(nameParts.length == 1)
             UnresolvedExtractValue(input, Literal(nameParts.head))
@@ -134,14 +132,14 @@ object ExpressionEncoder {
       }
     }
 
-    val deserializer =
-      NewInstance(cls, childrenDeserializers, ObjectType(cls), propagateNull = false)
+    val fromRowExpression =
+      NewInstance(cls, fromRowExpressions, ObjectType(cls), propagateNull = false)
 
     new ExpressionEncoder[Any](
       schema,
       flat = false,
-      serializer,
-      deserializer,
+      toRowExpressions,
+      fromRowExpression,
       ClassTag(cls))
   }
 
@@ -176,29 +174,29 @@ object ExpressionEncoder {
  * A generic encoder for JVM objects.
  *
  * @param schema The schema after converting `T` to a Spark SQL row.
- * @param serializer A set of expressions, one for each top-level field that can be used to
- *                   extract the values from a raw object into an [[InternalRow]].
- * @param deserializer An expression that will construct an object given an [[InternalRow]].
+ * @param toRowExpressions A set of expressions, one for each top-level field that can be used to
+ *                           extract the values from a raw object into an [[InternalRow]].
+ * @param fromRowExpression An expression that will construct an object given an [[InternalRow]].
  * @param clsTag A classtag for `T`.
  */
 case class ExpressionEncoder[T](
     schema: StructType,
     flat: Boolean,
-    serializer: Seq[Expression],
-    deserializer: Expression,
+    toRowExpressions: Seq[Expression],
+    fromRowExpression: Expression,
     clsTag: ClassTag[T])
   extends Encoder[T] {
 
-  if (flat) require(serializer.size == 1)
+  if (flat) require(toRowExpressions.size == 1)
 
   @transient
-  private lazy val extractProjection = GenerateUnsafeProjection.generate(serializer)
+  private lazy val extractProjection = GenerateUnsafeProjection.generate(toRowExpressions)
 
   @transient
   private lazy val inputRow = new GenericMutableRow(1)
 
   @transient
-  private lazy val constructProjection = GenerateSafeProjection.generate(deserializer :: Nil)
+  private lazy val constructProjection = GenerateSafeProjection.generate(fromRowExpression :: Nil)
 
   /**
    * Returns this encoder where it has been bound to its own output (i.e. no remaping of columns
@@ -207,16 +205,6 @@ case class ExpressionEncoder[T](
   def defaultBinding: ExpressionEncoder[T] = {
     val attrs = schema.toAttributes
     resolve(attrs, OuterScopes.outerScopes).bind(attrs)
-  }
-
-
-  /**
-   * Returns a new set (with unique ids) of [[NamedExpression]] that represent the serialized form
-   * of this object.
-   */
-  def namedExpressions: Seq[NamedExpression] = schema.map(_.name).zip(serializer).map {
-    case (_, ne: NamedExpression) => ne.newInstance()
-    case (name, e) => Alias(e, name)()
   }
 
   /**
@@ -230,7 +218,7 @@ case class ExpressionEncoder[T](
   } catch {
     case e: Exception =>
       throw new RuntimeException(
-        s"Error while encoding: $e\n${serializer.map(_.treeString).mkString("\n")}", e)
+        s"Error while encoding: $e\n${toRowExpressions.map(_.treeString).mkString("\n")}", e)
   }
 
   /**
@@ -242,7 +230,7 @@ case class ExpressionEncoder[T](
     constructProjection(row).get(0, ObjectType(clsTag.runtimeClass)).asInstanceOf[T]
   } catch {
     case e: Exception =>
-      throw new RuntimeException(s"Error while decoding: $e\n${deserializer.treeString}", e)
+      throw new RuntimeException(s"Error while decoding: $e\n${fromRowExpression.treeString}", e)
   }
 
   /**
@@ -251,7 +239,7 @@ case class ExpressionEncoder[T](
    * has not been done already in places where we plan to do later composition of encoders.
    */
   def assertUnresolved(): Unit = {
-    (deserializer +:  serializer).foreach(_.foreach {
+    (fromRowExpression +:  toRowExpressions).foreach(_.foreach {
       case a: AttributeReference if a.name != "loopVar" =>
         sys.error(s"Unresolved encoder expected, but $a was found.")
       case _ =>
@@ -259,10 +247,12 @@ case class ExpressionEncoder[T](
   }
 
   /**
-   * Validates `deserializer` to make sure it can be resolved by given schema, and produce
-   * friendly error messages to explain why it fails to resolve if there is something wrong.
+   * Returns a new copy of this encoder, where the expressions used by `fromRow` are resolved to the
+   * given schema.
    */
-  def validate(schema: Seq[Attribute]): Unit = {
+  def resolve(
+      schema: Seq[Attribute],
+      outerScopes: ConcurrentMap[String, AnyRef]): ExpressionEncoder[T] = {
     def fail(st: StructType, maxOrdinal: Int): Unit = {
       throw new AnalysisException(s"Try to map ${st.simpleString} to Tuple${maxOrdinal + 1}, " +
         "but failed as the number of fields does not line up.\n" +
@@ -270,10 +260,8 @@ case class ExpressionEncoder[T](
         " - Target schema: " + this.schema.simpleString)
     }
 
-    // If this is a tuple encoder or tupled encoder, which means its leaf nodes are all
-    // `BoundReference`, make sure their ordinals are all valid.
     var maxOrdinal = -1
-    deserializer.foreach {
+    fromRowExpression.foreach {
       case b: BoundReference => if (b.ordinal > maxOrdinal) maxOrdinal = b.ordinal
       case _ =>
     }
@@ -281,17 +269,7 @@ case class ExpressionEncoder[T](
       fail(StructType.fromAttributes(schema), maxOrdinal)
     }
 
-    // If we have nested tuple, the `fromRowExpression` will contains `GetStructField` instead of
-    // `UnresolvedExtractValue`, so we need to check if their ordinals are all valid.
-    // Note that, `BoundReference` contains the expected type, but here we need the actual type, so
-    // we unbound it by the given `schema` and propagate the actual type to `GetStructField`, after
-    // we resolve the `fromRowExpression`.
-    val resolved = SimpleAnalyzer.resolveExpression(
-      deserializer,
-      LocalRelation(schema),
-      throws = true)
-
-    val unbound = resolved transform {
+    val unbound = fromRowExpression transform {
       case b: BoundReference => schema(b.ordinal)
     }
 
@@ -311,42 +289,49 @@ case class ExpressionEncoder[T](
           fail(schema, maxOrdinal)
         }
     }
-  }
 
-  /**
-   * Returns a new copy of this encoder, where the `deserializer` is resolved to the given schema.
-   */
-  def resolve(
-      schema: Seq[Attribute],
-      outerScopes: ConcurrentMap[String, AnyRef]): ExpressionEncoder[T] = {
-    // Make a fake plan to wrap the deserializer, so that we can go though the whole analyzer, check
-    // analysis, go through optimizer, etc.
-    val plan = Project(
-      Alias(UnresolvedDeserializer(deserializer, schema), "")() :: Nil,
-      LocalRelation(schema))
+    val plan = Project(Alias(unbound, "")() :: Nil, LocalRelation(schema))
     val analyzedPlan = SimpleAnalyzer.execute(plan)
     SimpleAnalyzer.checkAnalysis(analyzedPlan)
-    copy(deserializer = SimplifyCasts(analyzedPlan).expressions.head.children.head)
+    val optimizedPlan = SimplifyCasts(analyzedPlan)
+
+    // In order to construct instances of inner classes (for example those declared in a REPL cell),
+    // we need an instance of the outer scope.  This rule substitues those outer objects into
+    // expressions that are missing them by looking up the name in the SQLContexts `outerScopes`
+    // registry.
+    copy(fromRowExpression = optimizedPlan.expressions.head.children.head transform {
+      case n: NewInstance if n.outerPointer.isEmpty && n.cls.isMemberClass =>
+        val outer = outerScopes.get(n.cls.getDeclaringClass.getName)
+        if (outer == null) {
+          throw new AnalysisException(
+            s"Unable to generate an encoder for inner class `${n.cls.getName}` without access " +
+            s"to the scope that this class was defined in. " + "" +
+             "Try moving this class out of its parent class.")
+        }
+
+        n.copy(outerPointer = Some(Literal.fromObject(outer)))
+    })
   }
 
   /**
-   * Returns a copy of this encoder where the `deserializer` has been bound to the
-   * ordinals of the given schema.  Note that you need to first call resolve before bind.
+   * Returns a copy of this encoder where the expressions used to construct an object from an input
+   * row have been bound to the ordinals of the given schema.  Note that you need to first call
+   * resolve before bind.
    */
   def bind(schema: Seq[Attribute]): ExpressionEncoder[T] = {
-    copy(deserializer = BindReferences.bindReference(deserializer, schema))
+    copy(fromRowExpression = BindReferences.bindReference(fromRowExpression, schema))
   }
 
   /**
    * Returns a new encoder with input columns shifted by `delta` ordinals
    */
   def shift(delta: Int): ExpressionEncoder[T] = {
-    copy(deserializer = deserializer transform {
+    copy(fromRowExpression = fromRowExpression transform {
       case r: BoundReference => r.copy(ordinal = r.ordinal + delta)
     })
   }
 
-  protected val attrs = serializer.flatMap(_.collect {
+  protected val attrs = toRowExpressions.flatMap(_.collect {
     case _: UnresolvedAttribute => ""
     case a: Attribute => s"#${a.exprId}"
     case b: BoundReference => s"[${b.ordinal}]"

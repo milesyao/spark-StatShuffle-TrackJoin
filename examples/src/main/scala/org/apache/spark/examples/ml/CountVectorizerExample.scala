@@ -21,17 +21,18 @@ package org.apache.spark.examples.ml
 // $example on$
 import org.apache.spark.ml.feature.{CountVectorizer, CountVectorizerModel}
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
+
 
 object CountVectorizerExample {
   def main(args: Array[String]) {
-    val spark = SparkSession
-      .builder
-      .appName("CounterVectorizerExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("CounterVectorizerExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val df = spark.createDataFrame(Seq(
+    val df = sqlContext.createDataFrame(Seq(
       (0, Array("a", "b", "c")),
       (1, Array("a", "b", "b", "c", "a"))
     )).toDF("id", "words")
@@ -51,8 +52,6 @@ object CountVectorizerExample {
 
     cvModel.transform(df).select("features").show()
     // $example off$
-
-    spark.stop()
   }
 }
 // scalastyle:on println

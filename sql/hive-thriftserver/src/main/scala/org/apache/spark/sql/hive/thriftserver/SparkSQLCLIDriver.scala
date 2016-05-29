@@ -20,10 +20,13 @@ package org.apache.spark.sql.hive.thriftserver
 import java.io._
 import java.util.{ArrayList => JArrayList, Locale}
 
+import org.apache.spark.sql.AnalysisException
+
 import scala.collection.JavaConverters._
 
 import jline.console.ConsoleReader
 import jline.console.history.FileHistory
+
 import org.apache.commons.lang3.StringUtils
 import org.apache.commons.logging.LogFactory
 import org.apache.hadoop.conf.Configuration
@@ -32,14 +35,13 @@ import org.apache.hadoop.hive.common.{HiveInterruptCallback, HiveInterruptUtils}
 import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.ql.Driver
 import org.apache.hadoop.hive.ql.exec.Utilities
-import org.apache.hadoop.hive.ql.processors._
+import org.apache.hadoop.hive.ql.processors.{AddResourceProcessor, SetProcessor, CommandProcessor, CommandProcessorFactory}
 import org.apache.hadoop.hive.ql.session.SessionState
 import org.apache.thrift.transport.TSocket
 
-import org.apache.spark.internal.Logging
-import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.hive.HiveUtils
-import org.apache.spark.util.ShutdownHookManager
+import org.apache.spark.Logging
+import org.apache.spark.sql.hive.HiveContext
+import org.apache.spark.util.{ShutdownHookManager, Utils}
 
 /**
  * This code doesn't support remote connections in Hive 1.2+, as the underlying CliDriver
@@ -81,7 +83,7 @@ private[hive] object SparkSQLCLIDriver extends Logging {
 
     val cliConf = new HiveConf(classOf[SessionState])
     // Override the location of the metastore since this is only used for local execution.
-    HiveUtils.newTemporaryConfiguration(useInMemoryDerby = false).foreach {
+    HiveContext.newTemporaryConfiguration().foreach {
       case (key, value) => cliConf.set(key, value)
     }
     val sessionState = new CliSessionState(cliConf)
@@ -149,8 +151,7 @@ private[hive] object SparkSQLCLIDriver extends Logging {
     }
 
     if (sessionState.database != null) {
-      SparkSQLEnv.sqlContext.sessionState.catalog.setCurrentDatabase(
-        s"${sessionState.database}")
+      SparkSQLEnv.hiveContext.runSqlHive(s"USE ${sessionState.database}")
     }
 
     // Execute -i init files (always in silent mode)
@@ -191,20 +192,6 @@ private[hive] object SparkSQLCLIDriver extends Logging {
         logWarning("WARNING: Encountered an error while trying to initialize Hive's " +
                            "history file.  History will not be available during this session.")
         logWarning(e.getMessage)
-    }
-
-    // add shutdown hook to flush the history to history file
-    ShutdownHookManager.addShutdownHook { () =>
-      reader.getHistory match {
-        case h: FileHistory =>
-          try {
-            h.flush()
-          } catch {
-            case e: IOException =>
-              logWarning("WARNING: Failed to write command history file: " + e.getMessage)
-          }
-        case _ =>
-      }
     }
 
     // TODO: missing
@@ -294,7 +281,9 @@ private[hive] class SparkSQLCLIDriver extends CliDriver with Logging {
       System.exit(0)
     }
     if (tokens(0).toLowerCase(Locale.ENGLISH).equals("source") ||
-      cmd_trimmed.startsWith("!") || isRemoteMode) {
+      cmd_trimmed.startsWith("!") ||
+      tokens(0).toLowerCase.equals("list") ||
+      isRemoteMode) {
       val start = System.currentTimeMillis()
       super.processCmd(cmd)
       val end = System.currentTimeMillis()
@@ -309,8 +298,7 @@ private[hive] class SparkSQLCLIDriver extends CliDriver with Logging {
       if (proc != null) {
         // scalastyle:off println
         if (proc.isInstanceOf[Driver] || proc.isInstanceOf[SetProcessor] ||
-          proc.isInstanceOf[AddResourceProcessor] || proc.isInstanceOf[ListResourceProcessor] ||
-          proc.isInstanceOf[ResetProcessor] ) {
+          proc.isInstanceOf[AddResourceProcessor]) {
           val driver = new SparkSQLDriver
 
           driver.init()
@@ -372,7 +360,7 @@ private[hive] class SparkSQLCLIDriver extends CliDriver with Logging {
           if (counter != 0) {
             responseMsg += s", Fetched $counter row(s)"
           }
-          console.printInfo(responseMsg, null)
+          console.printInfo(responseMsg , null)
           // Destroy the driver to release all the locks.
           driver.destroy()
         } else {

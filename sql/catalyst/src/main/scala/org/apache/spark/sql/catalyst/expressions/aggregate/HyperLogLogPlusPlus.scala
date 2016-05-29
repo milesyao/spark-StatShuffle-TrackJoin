@@ -20,6 +20,8 @@ package org.apache.spark.sql.catalyst.expressions.aggregate
 import java.lang.{Long => JLong}
 import java.util
 
+import com.clearspring.analytics.hash.MurmurHash
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
@@ -46,11 +48,6 @@ import org.apache.spark.sql.types._
  * @param relativeSD the maximum estimation error allowed.
  */
 // scalastyle:on
-@ExpressionDescription(
-  usage = """_FUNC_(expr) - Returns the estimated cardinality by HyperLogLog++.
-    _FUNC_(expr, relativeSD=0.05) - Returns the estimated cardinality by HyperLogLog++
-      with relativeSD, the maximum estimation error allowed.
-    """)
 case class HyperLogLogPlusPlus(
     child: Expression,
     relativeSD: Double = 0.05,
@@ -70,8 +67,6 @@ case class HyperLogLogPlusPlus(
       mutableAggBufferOffset = 0,
       inputAggBufferOffset = 0)
   }
-
-  override def prettyName: String = "approx_count_distinct"
 
   override def withNewMutableAggBufferOffset(newMutableAggBufferOffset: Int): ImperativeAggregate =
     copy(mutableAggBufferOffset = newMutableAggBufferOffset)
@@ -172,7 +167,7 @@ case class HyperLogLogPlusPlus(
     val v = child.eval(input)
     if (v != null) {
       // Create the hashed value 'x'.
-      val x = XxHash64Function.hash(v, child.dataType, 42L)
+      val x = MurmurHash.hash64(v)
 
       // Determine the index of the register we are going to use.
       val idx = (x >>> idxShift).toInt
@@ -243,7 +238,7 @@ case class HyperLogLogPlusPlus(
       diff * diff
     }
 
-    // Keep moving bounds as long as the (exclusive) high bound is closer to the estimate than
+    // Keep moving bounds as long as the the (exclusive) high bound is closer to the estimate than
     // the lower (inclusive) bound.
     var low = math.max(nearestEstimateIndex - K + 1, 0)
     var high = math.min(low + K, numEstimates)
@@ -452,7 +447,6 @@ object HyperLogLogPlusPlus {
 
   private def validateDoubleLiteral(exp: Expression): Double = exp match {
     case Literal(d: Double, DoubleType) => d
-    case Literal(dec: Decimal, _) => dec.toDouble
     case _ =>
       throw new AnalysisException("The second argument should be a double literal.")
   }

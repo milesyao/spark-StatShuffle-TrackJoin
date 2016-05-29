@@ -22,6 +22,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.hive.test.TestHive
 import org.apache.spark.sql.hive.test.TestHive._
 import org.apache.spark.sql.hive.test.TestHive.implicits._
+
 import org.apache.spark.util.Utils
 
 class HiveTableScanSuite extends HiveComparisonTest {
@@ -65,7 +66,7 @@ class HiveTableScanSuite extends HiveComparisonTest {
     TestHive.sql("DROP TABLE IF EXISTS timestamp_query_null")
     TestHive.sql(
       """
-        CREATE TABLE timestamp_query_null (time TIMESTAMP,id INT)
+        CREATE EXTERNAL TABLE timestamp_query_null (time TIMESTAMP,id INT)
         ROW FORMAT DELIMITED
         FIELDS TERMINATED BY ','
         LINES TERMINATED BY '\n'
@@ -84,7 +85,7 @@ class HiveTableScanSuite extends HiveComparisonTest {
     sql("""insert into table spark_4959 select "hi" from src limit 1""")
     table("spark_4959").select(
       'col1.as("CaseSensitiveColName"),
-      'col1.as("CaseSensitiveColName2")).createOrReplaceTempView("spark_4959_2")
+      'col1.as("CaseSensitiveColName2")).registerTempTable("spark_4959_2")
 
     assert(sql("select CaseSensitiveColName from spark_4959_2").head() === Row("hi"))
     assert(sql("select casesensitivecolname from spark_4959_2").head() === Row("hi"))

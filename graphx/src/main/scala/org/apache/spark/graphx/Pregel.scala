@@ -18,8 +18,8 @@
 package org.apache.spark.graphx
 
 import scala.reflect.ClassTag
+import org.apache.spark.Logging
 
-import org.apache.spark.internal.Logging
 
 /**
  * Implements a Pregel-like bulk-synchronous message-passing API.
@@ -119,12 +119,9 @@ object Pregel extends Logging {
       mergeMsg: (A, A) => A)
     : Graph[VD, ED] =
   {
-    require(maxIterations > 0, s"Maximum number of iterations must be greater than 0," +
-      s" but got ${maxIterations}")
-
     var g = graph.mapVertices((vid, vdata) => vprog(vid, vdata, initialMsg)).cache()
     // compute the messages
-    var messages = GraphXUtils.mapReduceTriplets(g, sendMsg, mergeMsg)
+    var messages = g.mapReduceTriplets(sendMsg, mergeMsg)
     var activeMessages = messages.count()
     // Loop
     var prevG: Graph[VD, ED] = null
@@ -138,8 +135,8 @@ object Pregel extends Logging {
       // Send new messages, skipping edges where neither side received a message. We must cache
       // messages so it can be materialized on the next line, allowing us to uncache the previous
       // iteration.
-      messages = GraphXUtils.mapReduceTriplets(
-        g, sendMsg, mergeMsg, Some((oldMessages, activeDirection))).cache()
+      messages = g.mapReduceTriplets(
+        sendMsg, mergeMsg, Some((oldMessages, activeDirection))).cache()
       // The call to count() materializes `messages` and the vertices of `g`. This hides oldMessages
       // (depended on by the vertices of g) and the vertices of prevG (depended on by oldMessages
       // and the vertices of g).
@@ -154,7 +151,7 @@ object Pregel extends Logging {
       // count the iteration
       i += 1
     }
-    messages.unpersist(blocking = false)
+
     g
   } // end of apply
 

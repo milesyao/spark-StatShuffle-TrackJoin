@@ -17,14 +17,16 @@
 
 package org.apache.spark.examples.ml;
 
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.SQLContext;
 
 // $example on$
 import java.util.Arrays;
-import java.util.List;
 
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.ml.feature.Bucketizer;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.types.DataTypes;
@@ -35,24 +37,23 @@ import org.apache.spark.sql.types.StructType;
 
 public class JavaBucketizerExample {
   public static void main(String[] args) {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaBucketizerExample")
-      .getOrCreate();
+    SparkConf conf = new SparkConf().setAppName("JavaBucketizerExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext jsql = new SQLContext(jsc);
 
     // $example on$
     double[] splits = {Double.NEGATIVE_INFINITY, -0.5, 0.0, 0.5, Double.POSITIVE_INFINITY};
 
-    List<Row> data = Arrays.asList(
+    JavaRDD<Row> data = jsc.parallelize(Arrays.asList(
       RowFactory.create(-0.5),
       RowFactory.create(-0.3),
       RowFactory.create(0.0),
       RowFactory.create(0.2)
-    );
+    ));
     StructType schema = new StructType(new StructField[]{
       new StructField("features", DataTypes.DoubleType, false, Metadata.empty())
     });
-    Dataset<Row> dataFrame = spark.createDataFrame(data, schema);
+    DataFrame dataFrame = jsql.createDataFrame(data, schema);
 
     Bucketizer bucketizer = new Bucketizer()
       .setInputCol("features")
@@ -60,10 +61,10 @@ public class JavaBucketizerExample {
       .setSplits(splits);
 
     // Transform original data into its bucket index.
-    Dataset<Row> bucketedData = bucketizer.transform(dataFrame);
+    DataFrame bucketedData = bucketizer.transform(dataFrame);
     bucketedData.show();
     // $example off$
-    spark.stop();
+    jsc.stop();
   }
 }
 

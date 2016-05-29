@@ -45,10 +45,10 @@ import org.apache.spark.util.Utils
  *       This is due to high-dimensional data (a) making it difficult to cluster at all (based
  *       on statistical/theoretical arguments) and (b) numerical issues with Gaussian distributions.
  *
- * @param k Number of independent Gaussians in the mixture model.
- * @param convergenceTol Maximum change in log-likelihood at which convergence
- *                       is considered to have occurred.
- * @param maxIterations Maximum number of iterations allowed.
+ * @param k The number of independent Gaussians in the mixture model
+ * @param convergenceTol The maximum change in log-likelihood at which convergence
+ * is considered to have occurred.
+ * @param maxIterations The maximum number of iterations to perform
  */
 @Since("1.3.0")
 class GaussianMixture private (
@@ -78,9 +78,11 @@ class GaussianMixture private (
    */
   @Since("1.3.0")
   def setInitialModel(model: GaussianMixtureModel): this.type = {
-    require(model.k == k,
-      s"Mismatched cluster count (model.k ${model.k} != k ${k})")
-    initialModel = Some(model)
+    if (model.k == k) {
+      initialModel = Some(model)
+    } else {
+      throw new IllegalArgumentException("mismatched cluster count (model.k != k)")
+    }
     this
   }
 
@@ -95,8 +97,6 @@ class GaussianMixture private (
    */
   @Since("1.3.0")
   def setK(k: Int): this.type = {
-    require(k > 0,
-      s"Number of Gaussians must be positive but got ${k}")
     this.k = k
     this
   }
@@ -108,18 +108,16 @@ class GaussianMixture private (
   def getK: Int = k
 
   /**
-   * Set the maximum number of iterations allowed. Default: 100
+   * Set the maximum number of iterations to run. Default: 100
    */
   @Since("1.3.0")
   def setMaxIterations(maxIterations: Int): this.type = {
-    require(maxIterations >= 0,
-      s"Maximum of iterations must be nonnegative but got ${maxIterations}")
     this.maxIterations = maxIterations
     this
   }
 
   /**
-   * Return the maximum number of iterations allowed
+   * Return the maximum number of iterations to run
    */
   @Since("1.3.0")
   def getMaxIterations: Int = maxIterations
@@ -130,8 +128,6 @@ class GaussianMixture private (
    */
   @Since("1.3.0")
   def setConvergenceTol(convergenceTol: Double): this.type = {
-    require(convergenceTol >= 0.0,
-      s"Convergence tolerance must be nonnegative but got ${convergenceTol}")
     this.convergenceTol = convergenceTol
     this
   }
@@ -181,12 +177,13 @@ class GaussianMixture private (
     val (weights, gaussians) = initialModel match {
       case Some(gmm) => (gmm.weights, gmm.gaussians)
 
-      case None =>
+      case None => {
         val samples = breezeData.takeSample(withReplacement = true, k * nSamples, seed)
         (Array.fill(k)(1.0 / k), Array.tabulate(k) { i =>
           val slice = samples.view(i * nSamples, (i + 1) * nSamples)
           new MultivariateGaussian(vectorMean(slice), initCovariance(slice))
         })
+      }
     }
 
     var llh = Double.MinValue // current log-likelihood

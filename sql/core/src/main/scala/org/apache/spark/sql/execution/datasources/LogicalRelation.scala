@@ -16,7 +16,6 @@
  */
 package org.apache.spark.sql.execution.datasources
 
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.MultiInstanceRelation
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeMap, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, Statistics}
@@ -31,8 +30,7 @@ import org.apache.spark.sql.sources.BaseRelation
  */
 case class LogicalRelation(
     relation: BaseRelation,
-    expectedOutputAttributes: Option[Seq[Attribute]] = None,
-    metastoreTableIdentifier: Option[TableIdentifier] = None)
+    expectedOutputAttributes: Option[Seq[Attribute]] = None)
   extends LeafNode with MultiInstanceRelation {
 
   override val output: Seq[AttributeReference] = {
@@ -51,7 +49,7 @@ case class LogicalRelation(
 
   // Logical Relations are distinct if they have different output for the sake of transformations.
   override def equals(other: Any): Boolean = other match {
-    case l @ LogicalRelation(otherRelation, _, _) => relation == otherRelation && output == l.output
+    case l @ LogicalRelation(otherRelation, _) => relation == otherRelation && output == l.output
     case _ => false
   }
 
@@ -60,7 +58,7 @@ case class LogicalRelation(
   }
 
   override def sameResult(otherPlan: LogicalPlan): Boolean = otherPlan match {
-    case LogicalRelation(otherRelation, _, _) => relation == otherRelation
+    case LogicalRelation(otherRelation, _) => relation == otherRelation
     case _ => false
   }
 
@@ -76,11 +74,7 @@ case class LogicalRelation(
   /** Used to lookup original attribute capitalization */
   val attributeMap: AttributeMap[AttributeReference] = AttributeMap(output.map(o => (o, o)))
 
-  def newInstance(): this.type =
-    LogicalRelation(
-      relation,
-      expectedOutputAttributes,
-      metastoreTableIdentifier).asInstanceOf[this.type]
+  def newInstance(): this.type = LogicalRelation(relation).asInstanceOf[this.type]
 
   override def simpleString: String = s"Relation[${output.mkString(",")}] $relation"
 }

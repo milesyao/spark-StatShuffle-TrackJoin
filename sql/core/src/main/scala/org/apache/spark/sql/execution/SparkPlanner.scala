@@ -20,27 +20,26 @@ package org.apache.spark.sql.execution
 import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.execution.datasources.{DataSourceStrategy, FileSourceStrategy}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.execution.datasources.DataSourceStrategy
 
-class SparkPlanner(
-    val sparkContext: SparkContext,
-    val conf: SQLConf,
-    val extraStrategies: Seq[Strategy])
-  extends SparkStrategies {
+class SparkPlanner(val sqlContext: SQLContext) extends SparkStrategies {
+  val sparkContext: SparkContext = sqlContext.sparkContext
 
-  def numPartitions: Int = conf.numShufflePartitions
+  def numPartitions: Int = sqlContext.conf.numShufflePartitions
 
   def strategies: Seq[Strategy] =
-      extraStrategies ++ (
-      FileSourceStrategy ::
+    sqlContext.experimental.extraStrategies ++ (
       DataSourceStrategy ::
       DDLStrategy ::
-      SpecialLimits ::
+      TakeOrderedAndProject ::
       Aggregation ::
-      JoinSelection ::
+      LeftSemiJoin ::
+      EquiJoinSelection ::
       InMemoryScans ::
-      BasicOperators :: Nil)
+      BasicOperators ::
+      BroadcastNestedLoop ::
+      CartesianProduct ::
+      DefaultJoin :: Nil)
 
   /**
    * Used to build table scan operators where complex projection and filtering are done using
@@ -78,10 +77,10 @@ class SparkPlanner(
       // when the columns of this projection are enough to evaluate all filter conditions,
       // just do a scan followed by a filter, with no extra project.
       val scan = scanBuilder(projectList.asInstanceOf[Seq[Attribute]])
-      filterCondition.map(FilterExec(_, scan)).getOrElse(scan)
+      filterCondition.map(Filter(_, scan)).getOrElse(scan)
     } else {
       val scan = scanBuilder((projectSet ++ filterSet).toSeq)
-      ProjectExec(projectList, filterCondition.map(FilterExec(_, scan)).getOrElse(scan))
+      Project(projectList, filterCondition.map(Filter(_, scan)).getOrElse(scan))
     }
   }
 }

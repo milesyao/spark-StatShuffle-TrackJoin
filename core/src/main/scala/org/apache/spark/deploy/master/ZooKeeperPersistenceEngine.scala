@@ -25,9 +25,8 @@ import scala.reflect.ClassTag
 import org.apache.curator.framework.CuratorFramework
 import org.apache.zookeeper.CreateMode
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{Logging, SparkConf}
 import org.apache.spark.deploy.SparkCuratorUtil
-import org.apache.spark.internal.Logging
 import org.apache.spark.serializer.Serializer
 
 
@@ -51,7 +50,7 @@ private[master] class ZooKeeperPersistenceEngine(conf: SparkConf, val serializer
 
   override def read[T: ClassTag](prefix: String): Seq[T] = {
     zk.getChildren.forPath(WORKING_DIR).asScala
-      .filter(_.startsWith(prefix)).flatMap(deserializeFromFile[T])
+      .filter(_.startsWith(prefix)).map(deserializeFromFile[T]).flatten
   }
 
   override def close() {
@@ -70,10 +69,11 @@ private[master] class ZooKeeperPersistenceEngine(conf: SparkConf, val serializer
     try {
       Some(serializer.newInstance().deserialize[T](ByteBuffer.wrap(fileData)))
     } catch {
-      case e: Exception =>
+      case e: Exception => {
         logWarning("Exception while reading persisted file, deleting", e)
         zk.delete().forPath(WORKING_DIR + "/" + filename)
         None
+      }
     }
   }
 }

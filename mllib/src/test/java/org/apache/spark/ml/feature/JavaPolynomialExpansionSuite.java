@@ -20,21 +20,39 @@ package org.apache.spark.ml.feature;
 import java.util.Arrays;
 import java.util.List;
 
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
-import org.apache.spark.SharedSparkSession;
-import org.apache.spark.ml.linalg.Vector;
-import org.apache.spark.ml.linalg.VectorUDT;
-import org.apache.spark.ml.linalg.Vectors;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.mllib.linalg.Vector;
+import org.apache.spark.mllib.linalg.VectorUDT;
+import org.apache.spark.mllib.linalg.Vectors;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 
-public class JavaPolynomialExpansionSuite extends SharedSparkSession {
+public class JavaPolynomialExpansionSuite {
+  private transient JavaSparkContext jsc;
+  private transient SQLContext jsql;
+
+  @Before
+  public void setUp() {
+    jsc = new JavaSparkContext("local", "JavaPolynomialExpansionSuite");
+    jsql = new SQLContext(jsc);
+  }
+
+  @After
+  public void tearDown() {
+    jsc.stop();
+    jsc = null;
+  }
 
   @Test
   public void polynomialExpansionTest() {
@@ -55,20 +73,20 @@ public class JavaPolynomialExpansionSuite extends SharedSparkSession {
       )
     );
 
-    StructType schema = new StructType(new StructField[]{
+    StructType schema = new StructType(new StructField[] {
       new StructField("features", new VectorUDT(), false, Metadata.empty()),
       new StructField("expected", new VectorUDT(), false, Metadata.empty())
     });
 
-    Dataset<Row> dataset = spark.createDataFrame(data, schema);
+    DataFrame dataset = jsql.createDataFrame(data, schema);
 
-    List<Row> pairs = polyExpansion.transform(dataset)
+    Row[] pairs = polyExpansion.transform(dataset)
       .select("polyFeatures", "expected")
-      .collectAsList();
+      .collect();
 
     for (Row r : pairs) {
-      double[] polyFeatures = ((Vector) r.get(0)).toArray();
-      double[] expected = ((Vector) r.get(1)).toArray();
+      double[] polyFeatures = ((Vector)r.get(0)).toArray();
+      double[] expected = ((Vector)r.get(1)).toArray();
       Assert.assertArrayEquals(polyFeatures, expected, 1e-1);
     }
   }

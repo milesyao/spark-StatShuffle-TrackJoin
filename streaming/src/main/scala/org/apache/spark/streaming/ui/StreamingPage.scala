@@ -17,13 +17,15 @@
 
 package org.apache.spark.streaming.ui
 
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.concurrent.TimeUnit
 import javax.servlet.http.HttpServletRequest
 
 import scala.collection.mutable.ArrayBuffer
 import scala.xml.{Node, Unparsed}
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.Logging
 import org.apache.spark.ui._
 import org.apache.spark.ui.{UIUtils => SparkUIUtils}
 
@@ -125,9 +127,9 @@ private[ui] class MillisecondsStatUIData(data: Seq[(Long, Long)]) {
  * A helper class for "input rate" to generate data that will be used in the timeline and histogram
  * graphs.
  *
- * @param data (batch time, record rate).
+ * @param data (batchTime, event-rate).
  */
-private[ui] class RecordRateUIData(val data: Seq[(Long, Double)]) {
+private[ui] class EventRateUIData(val data: Seq[(Long, Double)]) {
 
   val avg: Option[Double] = if (data.isEmpty) None else Some(data.map(_._2).sum / data.size)
 
@@ -215,7 +217,7 @@ private[ui] class StreamingPage(parent: StreamingTab)
     val minBatchTime = if (batchTimes.isEmpty) startTime else batchTimes.min
     val maxBatchTime = if (batchTimes.isEmpty) startTime else batchTimes.max
 
-    val recordRateForAllStreams = new RecordRateUIData(batches.map { batchInfo =>
+    val eventRateForAllStreams = new EventRateUIData(batches.map { batchInfo =>
       (batchInfo.batchTime.milliseconds, batchInfo.numRecords * 1000.0 / listener.batchDuration)
     })
 
@@ -241,24 +243,24 @@ private[ui] class StreamingPage(parent: StreamingTab)
 
     // Use the max input rate for all InputDStreams' graphs to make the Y axis ranges same.
     // If it's not an integral number, just use its ceil integral number.
-    val maxRecordRate = recordRateForAllStreams.max.map(_.ceil.toLong).getOrElse(0L)
-    val minRecordRate = 0L
+    val maxEventRate = eventRateForAllStreams.max.map(_.ceil.toLong).getOrElse(0L)
+    val minEventRate = 0L
 
     val batchInterval = UIUtils.convertToTimeUnit(listener.batchDuration, normalizedUnit)
 
     val jsCollector = new JsCollector
 
-    val graphUIDataForRecordRateOfAllStreams =
+    val graphUIDataForEventRateOfAllStreams =
       new GraphUIData(
-        "all-stream-records-timeline",
-        "all-stream-records-histogram",
-        recordRateForAllStreams.data,
+        "all-stream-events-timeline",
+        "all-stream-events-histogram",
+        eventRateForAllStreams.data,
         minBatchTime,
         maxBatchTime,
-        minRecordRate,
-        maxRecordRate,
-        "records/sec")
-    graphUIDataForRecordRateOfAllStreams.generateDataJs(jsCollector)
+        minEventRate,
+        maxEventRate,
+        "events/sec")
+    graphUIDataForEventRateOfAllStreams.generateDataJs(jsCollector)
 
     val graphUIDataForSchedulingDelay =
       new GraphUIData(
@@ -334,16 +336,16 @@ private[ui] class StreamingPage(parent: StreamingTab)
                   <div>Receivers: {listener.numActiveReceivers} / {numReceivers} active</div>
                 }
               }
-              <div>Avg: {recordRateForAllStreams.formattedAvg} records/sec</div>
+              <div>Avg: {eventRateForAllStreams.formattedAvg} events/sec</div>
             </div>
           </td>
-          <td class="timeline">{graphUIDataForRecordRateOfAllStreams.generateTimelineHtml(jsCollector)}</td>
-          <td class="histogram">{graphUIDataForRecordRateOfAllStreams.generateHistogramHtml(jsCollector)}</td>
+          <td class="timeline">{graphUIDataForEventRateOfAllStreams.generateTimelineHtml(jsCollector)}</td>
+          <td class="histogram">{graphUIDataForEventRateOfAllStreams.generateHistogramHtml(jsCollector)}</td>
         </tr>
       {if (hasStream) {
         <tr id="inputs-table" style="display: none;" >
           <td colspan="3">
-            {generateInputDStreamsTable(jsCollector, minBatchTime, maxBatchTime, minRecordRate, maxRecordRate)}
+            {generateInputDStreamsTable(jsCollector, minBatchTime, maxBatchTime, minEventRate, maxEventRate)}
           </td>
         </tr>
       }}
@@ -390,16 +392,8 @@ private[ui] class StreamingPage(parent: StreamingTab)
       maxX: Long,
       minY: Double,
       maxY: Double): Seq[Node] = {
-    val maxYCalculated = listener.receivedRecordRateWithBatchTime.values
-      .flatMap { case streamAndRates => streamAndRates.map { case (_, recordRate) => recordRate } }
-      .reduceOption[Double](math.max)
-      .map(_.ceil.toLong)
-      .getOrElse(0L)
-
-    val content = listener.receivedRecordRateWithBatchTime.toList.sortBy(_._1).map {
-      case (streamId, recordRates) =>
-        generateInputDStreamRow(
-          jsCollector, streamId, recordRates, minX, maxX, minY, maxYCalculated)
+    val content = listener.receivedEventRateWithBatchTime.map { case (streamId, eventRates) =>
+      generateInputDStreamRow(jsCollector, streamId, eventRates, minX, maxX, minY, maxY)
     }.foldLeft[Seq[Node]](Nil)(_ ++ _)
 
     // scalastyle:off
@@ -423,7 +417,7 @@ private[ui] class StreamingPage(parent: StreamingTab)
   private def generateInputDStreamRow(
       jsCollector: JsCollector,
       streamId: Int,
-      recordRates: Seq[(Long, Double)],
+      eventRates: Seq[(Long, Double)],
       minX: Long,
       maxX: Long,
       minY: Double,
@@ -443,30 +437,30 @@ private[ui] class StreamingPage(parent: StreamingTab)
     }.getOrElse(emptyCell)
     val receiverLastError = receiverInfo.map { info =>
       val msg = s"${info.lastErrorMessage} - ${info.lastError}"
-      if (msg.length > 100) msg.take(97) + "..." else msg
+      if (msg.size > 100) msg.take(97) + "..." else msg
     }.getOrElse(emptyCell)
     val receiverLastErrorTime = receiverInfo.map {
       r => if (r.lastErrorTime < 0) "-" else SparkUIUtils.formatDate(r.lastErrorTime)
     }.getOrElse(emptyCell)
-    val receivedRecords = new RecordRateUIData(recordRates)
+    val receivedRecords = new EventRateUIData(eventRates)
 
-    val graphUIDataForRecordRate =
+    val graphUIDataForEventRate =
       new GraphUIData(
-        s"stream-$streamId-records-timeline",
-        s"stream-$streamId-records-histogram",
+        s"stream-$streamId-events-timeline",
+        s"stream-$streamId-events-histogram",
         receivedRecords.data,
         minX,
         maxX,
         minY,
         maxY,
-        "records/sec")
-    graphUIDataForRecordRate.generateDataJs(jsCollector)
+        "events/sec")
+    graphUIDataForEventRate.generateDataJs(jsCollector)
 
     <tr>
       <td rowspan="2" style="vertical-align: middle; width: 151px;">
         <div style="width: 151px;">
           <div style="word-wrap: break-word;"><strong>{receiverName}</strong></div>
-          <div>Avg: {receivedRecords.formattedAvg} records/sec</div>
+          <div>Avg: {receivedRecords.formattedAvg} events/sec</div>
         </div>
       </td>
       <td>{receiverActive}</td>
@@ -476,9 +470,9 @@ private[ui] class StreamingPage(parent: StreamingTab)
     </tr>
     <tr>
       <td colspan="3" class="timeline">
-        {graphUIDataForRecordRate.generateTimelineHtml(jsCollector)}
+        {graphUIDataForEventRate.generateTimelineHtml(jsCollector)}
       </td>
-      <td class="histogram">{graphUIDataForRecordRate.generateHistogramHtml(jsCollector)}</td>
+      <td class="histogram">{graphUIDataForEventRate.generateHistogramHtml(jsCollector)}</td>
     </tr>
   }
 
@@ -559,7 +553,7 @@ private[ui] class JsCollector {
   def toHtml: Seq[Node] = {
     val js =
       s"""
-         |$$(document).ready(function() {
+         |$$(document).ready(function(){
          |    ${preparedStatements.mkString("\n")}
          |    ${statements.mkString("\n")}
          |});""".stripMargin

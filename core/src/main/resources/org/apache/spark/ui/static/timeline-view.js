@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-function drawApplicationTimeline(groupArray, eventObjArray, startTime, offset) {
+function drawApplicationTimeline(groupArray, eventObjArray, startTime) {
   var groups = new vis.DataSet(groupArray);
   var items = new vis.DataSet(eventObjArray);
   var container = $("#application-timeline")[0];
@@ -26,10 +26,7 @@ function drawApplicationTimeline(groupArray, eventObjArray, startTime, offset) {
     editable: false,
     showCurrentTime: false,
     min: startTime,
-    zoomable: false,
-    moment: function (date) {
-      return vis.moment(date).utcOffset(offset);
-    }
+    zoomable: false
   };
 
   var applicationTimeline = new vis.Timeline(container);
@@ -44,7 +41,7 @@ function drawApplicationTimeline(groupArray, eventObjArray, startTime, offset) {
     $(".item.range.job.application-timeline-object").each(function() {
       var getSelectorForJobEntry = function(baseElem) {
         var jobIdText = $($(baseElem).find(".application-timeline-content")[0]).text();
-        var jobId = jobIdText.match("\\(Job (\\d+)\\)$")[1];
+        var jobId = jobIdText.match("\\(Job (\\d+)\\)")[1];
        return "#job-" + jobId;
       };
 
@@ -90,7 +87,7 @@ $(function (){
   }
 });
 
-function drawJobTimeline(groupArray, eventObjArray, startTime, offset) {
+function drawJobTimeline(groupArray, eventObjArray, startTime) {
   var groups = new vis.DataSet(groupArray);
   var items = new vis.DataSet(eventObjArray);
   var container = $('#job-timeline')[0];
@@ -102,9 +99,6 @@ function drawJobTimeline(groupArray, eventObjArray, startTime, offset) {
     showCurrentTime: false,
     min: startTime,
     zoomable: false,
-    moment: function (date) {
-      return vis.moment(date).utcOffset(offset);
-    }
   };
 
   var jobTimeline = new vis.Timeline(container);
@@ -119,7 +113,7 @@ function drawJobTimeline(groupArray, eventObjArray, startTime, offset) {
     $(".item.range.stage.job-timeline-object").each(function() {
       var getSelectorForStageEntry = function(baseElem) {
         var stageIdText = $($(baseElem).find(".job-timeline-content")[0]).text();
-        var stageIdAndAttempt = stageIdText.match("\\(Stage (\\d+\\.\\d+)\\)$")[1].split(".");
+        var stageIdAndAttempt = stageIdText.match("\\(Stage (\\d+\\.\\d+)\\)")[1].split(".");
         return "#stage-" + stageIdAndAttempt[0] + "-" + stageIdAndAttempt[1];
       };
 
@@ -165,7 +159,7 @@ $(function (){
   }
 });
 
-function drawTaskAssignmentTimeline(groupArray, eventObjArray, minLaunchTime, maxFinishTime, offset) {
+function drawTaskAssignmentTimeline(groupArray, eventObjArray, minLaunchTime, maxFinishTime) {
   var groups = new vis.DataSet(groupArray);
   var items = new vis.DataSet(eventObjArray);
   var container = $("#task-assignment-timeline")[0]
@@ -179,10 +173,7 @@ function drawTaskAssignmentTimeline(groupArray, eventObjArray, minLaunchTime, ma
     showCurrentTime: false,
     min: minLaunchTime,
     max: maxFinishTime,
-    zoomable: false,
-    moment: function (date) {
-      return vis.moment(date).utcOffset(offset);
-    }
+    zoomable: false
   };
 
   var taskTimeline = new vis.Timeline(container)

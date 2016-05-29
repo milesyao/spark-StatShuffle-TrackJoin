@@ -20,19 +20,19 @@ package org.apache.spark.examples.ml
 
 // $example on$
 import org.apache.spark.ml.feature.VectorAssembler
-import org.apache.spark.ml.linalg.Vectors
+import org.apache.spark.mllib.linalg.Vectors
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object VectorAssemblerExample {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("VectorAssemblerExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("VectorAssemblerExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val dataset = spark.createDataFrame(
+    val dataset = sqlContext.createDataFrame(
       Seq((0, 18, 1.0, Vectors.dense(0.0, 10.0, 0.5), 1.0))
     ).toDF("id", "hour", "mobile", "userFeatures", "clicked")
 
@@ -43,8 +43,7 @@ object VectorAssemblerExample {
     val output = assembler.transform(dataset)
     println(output.select("features", "clicked").first())
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

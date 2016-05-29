@@ -17,26 +17,22 @@
 
 package org.apache.spark.sql.hive
 
-import java.io.{File, PrintWriter}
-
 import scala.reflect.ClassTag
 
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{Row, SQLConf, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.command.AnalyzeTableCommand
 import org.apache.spark.sql.execution.joins._
+import org.apache.spark.sql.hive.execution._
 import org.apache.spark.sql.hive.test.TestHiveSingleton
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SQLTestUtils
 
-class StatisticsSuite extends QueryTest with TestHiveSingleton with SQLTestUtils {
+class StatisticsSuite extends QueryTest with TestHiveSingleton {
   import hiveContext.sql
 
   test("parse analyze commands") {
     def assertAnalyzeCommand(analyzeCommand: String, c: Class[_]) {
-      val parsed = hiveContext.parseSql(analyzeCommand)
+      val parsed = HiveQl.parseSql(analyzeCommand)
       val operators = parsed.collect {
-        case a: AnalyzeTableCommand => a
+        case a: AnalyzeTable => a
         case o => o
       }
 
@@ -52,74 +48,28 @@ class StatisticsSuite extends QueryTest with TestHiveSingleton with SQLTestUtils
 
     assertAnalyzeCommand(
       "ANALYZE TABLE Table1 COMPUTE STATISTICS",
-      classOf[AnalyzeTableCommand])
+      classOf[HiveNativeCommand])
     assertAnalyzeCommand(
       "ANALYZE TABLE Table1 PARTITION(ds='2008-04-09', hr=11) COMPUTE STATISTICS",
-      classOf[AnalyzeTableCommand])
+      classOf[HiveNativeCommand])
     assertAnalyzeCommand(
       "ANALYZE TABLE Table1 PARTITION(ds='2008-04-09', hr=11) COMPUTE STATISTICS noscan",
-      classOf[AnalyzeTableCommand])
+      classOf[HiveNativeCommand])
     assertAnalyzeCommand(
       "ANALYZE TABLE Table1 PARTITION(ds, hr) COMPUTE STATISTICS",
-      classOf[AnalyzeTableCommand])
+      classOf[HiveNativeCommand])
     assertAnalyzeCommand(
       "ANALYZE TABLE Table1 PARTITION(ds, hr) COMPUTE STATISTICS noscan",
-      classOf[AnalyzeTableCommand])
+      classOf[HiveNativeCommand])
 
     assertAnalyzeCommand(
       "ANALYZE TABLE Table1 COMPUTE STATISTICS nOscAn",
-      classOf[AnalyzeTableCommand])
+      classOf[AnalyzeTable])
   }
 
-  test("MetastoreRelations fallback to HDFS for size estimation") {
-    val enableFallBackToHdfsForStats = hiveContext.conf.fallBackToHdfsForStatsEnabled
-    try {
-      withTempDir { tempDir =>
-
-        // EXTERNAL OpenCSVSerde table pointing to LOCATION
-
-        val file1 = new File(tempDir + "/data1")
-        val writer1 = new PrintWriter(file1)
-        writer1.write("1,2")
-        writer1.close()
-
-        val file2 = new File(tempDir + "/data2")
-        val writer2 = new PrintWriter(file2)
-        writer2.write("1,2")
-        writer2.close()
-
-        sql(
-          s"""CREATE EXTERNAL TABLE csv_table(page_id INT, impressions INT)
-            ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
-            WITH SERDEPROPERTIES (
-              \"separatorChar\" = \",\",
-              \"quoteChar\"     = \"\\\"\",
-              \"escapeChar\"    = \"\\\\\")
-            LOCATION '$tempDir'
-          """)
-
-        hiveContext.setConf(SQLConf.ENABLE_FALL_BACK_TO_HDFS_FOR_STATS, true)
-
-        val relation = hiveContext.sessionState.catalog.lookupRelation(TableIdentifier("csv_table"))
-          .asInstanceOf[MetastoreRelation]
-
-        val properties = relation.hiveQlTable.getParameters
-        assert(properties.get("totalSize").toLong <= 0, "external table totalSize must be <= 0")
-        assert(properties.get("rawDataSize").toLong <= 0, "external table rawDataSize must be <= 0")
-
-        val sizeInBytes = relation.statistics.sizeInBytes
-        assert(sizeInBytes === BigInt(file1.length() + file2.length()))
-      }
-    } finally {
-      hiveContext.setConf(SQLConf.ENABLE_FALL_BACK_TO_HDFS_FOR_STATS, enableFallBackToHdfsForStats)
-      sql("DROP TABLE csv_table ")
-    }
-  }
-
-  ignore("analyze MetastoreRelations") {
+  test("analyze MetastoreRelations") {
     def queryTotalSize(tableName: String): BigInt =
-      hiveContext.sessionState.catalog.lookupRelation(
-        TableIdentifier(tableName)).statistics.sizeInBytes
+      hiveContext.catalog.lookupRelation(TableIdentifier(tableName)).statistics.sizeInBytes
 
     // Non-partitioned table
     sql("CREATE TABLE analyzeTable (key STRING, value STRING)").collect()
@@ -157,18 +107,16 @@ class StatisticsSuite extends QueryTest with TestHiveSingleton with SQLTestUtils
 
     sql("ANALYZE TABLE analyzeTable_part COMPUTE STATISTICS noscan")
 
-    // This seems to be flaky.
-    // assert(queryTotalSize("analyzeTable_part") === BigInt(17436))
+    assert(queryTotalSize("analyzeTable_part") === BigInt(17436))
 
     sql("DROP TABLE analyzeTable_part").collect()
 
     // Try to analyze a temp table
-    sql("""SELECT * FROM src""").createOrReplaceTempView("tempTable")
+    sql("""SELECT * FROM src""").registerTempTable("tempTable")
     intercept[UnsupportedOperationException] {
-      hiveContext.sql("ANALYZE TABLE tempTable COMPUTE STATISTICS")
+      hiveContext.analyze("tempTable")
     }
-    hiveContext.sessionState.catalog.dropTable(
-      TableIdentifier("tempTable"), ignoreIfNotExists = true)
+    hiveContext.catalog.unregisterTable(TableIdentifier("tempTable"))
   }
 
   test("estimates the size of a test MetastoreRelation") {
@@ -202,7 +150,7 @@ class StatisticsSuite extends QueryTest with TestHiveSingleton with SQLTestUtils
 
       // Using `sparkPlan` because for relevant patterns in HashJoin to be
       // matched, other strategies need to be applied.
-      var bhj = df.queryExecution.sparkPlan.collect { case j: BroadcastHashJoinExec => j }
+      var bhj = df.queryExecution.sparkPlan.collect { case j: BroadcastHashJoin => j }
       assert(bhj.size === 1,
         s"actual query plans do not contain broadcast join: ${df.queryExecution}")
 
@@ -213,10 +161,10 @@ class StatisticsSuite extends QueryTest with TestHiveSingleton with SQLTestUtils
 
         sql(s"""SET ${SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key}=-1""")
         df = sql(query)
-        bhj = df.queryExecution.sparkPlan.collect { case j: BroadcastHashJoinExec => j }
+        bhj = df.queryExecution.sparkPlan.collect { case j: BroadcastHashJoin => j }
         assert(bhj.isEmpty, "BroadcastHashJoin still planned even though it is switched off")
 
-        val shj = df.queryExecution.sparkPlan.collect { case j: SortMergeJoinExec => j }
+        val shj = df.queryExecution.sparkPlan.collect { case j: SortMergeJoin => j }
         assert(shj.size === 1,
           "SortMergeJoin should be planned when BroadcastHashJoin is turned off")
 
@@ -259,7 +207,7 @@ class StatisticsSuite extends QueryTest with TestHiveSingleton with SQLTestUtils
     // Using `sparkPlan` because for relevant patterns in HashJoin to be
     // matched, other strategies need to be applied.
     var bhj = df.queryExecution.sparkPlan.collect {
-      case j: BroadcastHashJoinExec => j
+      case j: BroadcastLeftSemiJoinHash => j
     }
     assert(bhj.size === 1,
       s"actual query plans do not contain broadcast join: ${df.queryExecution}")
@@ -272,15 +220,15 @@ class StatisticsSuite extends QueryTest with TestHiveSingleton with SQLTestUtils
       sql(s"SET ${SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key}=-1")
       df = sql(leftSemiJoinQuery)
       bhj = df.queryExecution.sparkPlan.collect {
-        case j: BroadcastHashJoinExec => j
+        case j: BroadcastLeftSemiJoinHash => j
       }
       assert(bhj.isEmpty, "BroadcastHashJoin still planned even though it is switched off")
 
       val shj = df.queryExecution.sparkPlan.collect {
-        case j: SortMergeJoinExec => j
+        case j: LeftSemiJoinHash => j
       }
       assert(shj.size === 1,
-        "SortMergeJoinExec should be planned when BroadcastHashJoin is turned off")
+        "LeftSemiJoinHash should be planned when BroadcastHashJoin is turned off")
 
       sql(s"SET ${SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key}=$tmp")
     }

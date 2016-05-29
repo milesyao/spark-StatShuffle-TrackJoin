@@ -155,7 +155,7 @@ final class DataFrameNaFunctions private[sql](df: DataFrame) {
    * @since 1.3.1
    */
   def fill(value: Double, cols: Seq[String]): DataFrame = {
-    val columnEquals = df.sparkSession.sessionState.analyzer.resolver
+    val columnEquals = df.sqlContext.analyzer.resolver
     val projections = df.schema.fields.map { f =>
       // Only fill if the column is part of the cols list.
       if (f.dataType.isInstanceOf[NumericType] && cols.exists(col => columnEquals(f.name, col))) {
@@ -182,7 +182,7 @@ final class DataFrameNaFunctions private[sql](df: DataFrame) {
    * @since 1.3.1
    */
   def fill(value: String, cols: Seq[String]): DataFrame = {
-    val columnEquals = df.sparkSession.sessionState.analyzer.resolver
+    val columnEquals = df.sqlContext.analyzer.resolver
     val projections = df.schema.fields.map { f =>
       // Only fill if the column is part of the cols list.
       if (f.dataType.isInstanceOf[StringType] && cols.exists(col => columnEquals(f.name, col))) {
@@ -200,7 +200,6 @@ final class DataFrameNaFunctions private[sql](df: DataFrame) {
    * The key of the map is the column name, and the value of the map is the replacement value.
    * The value must be of the following type:
    * `Integer`, `Long`, `Float`, `Double`, `String`, `Boolean`.
-   * Replacement values are cast to the column data type.
    *
    * For example, the following replaces null values in column "A" with string "unknown", and
    * null values in column "B" with numeric value 1.0.
@@ -218,7 +217,6 @@ final class DataFrameNaFunctions private[sql](df: DataFrame) {
    *
    * The key of the map is the column name, and the value of the map is the replacement value.
    * The value must be of the following type: `Int`, `Long`, `Float`, `Double`, `String`, `Boolean`.
-   * Replacement values are cast to the column data type.
    *
    * For example, the following replaces null values in column "A" with string "unknown", and
    * null values in column "B" with numeric value 1.0.
@@ -355,7 +353,7 @@ final class DataFrameNaFunctions private[sql](df: DataFrame) {
       case _: String => StringType
     }
 
-    val columnEquals = df.sparkSession.sessionState.analyzer.resolver
+    val columnEquals = df.sqlContext.analyzer.resolver
     val projections = df.schema.fields.map { f =>
       val shouldReplace = cols.exists(colName => columnEquals(colName, f.name))
       if (f.dataType.isInstanceOf[NumericType] && targetColumnType == DoubleType && shouldReplace) {
@@ -384,14 +382,14 @@ final class DataFrameNaFunctions private[sql](df: DataFrame) {
       }
     }
 
-    val columnEquals = df.sparkSession.sessionState.analyzer.resolver
+    val columnEquals = df.sqlContext.analyzer.resolver
     val projections = df.schema.fields.map { f =>
       values.find { case (k, _) => columnEquals(k, f.name) }.map { case (_, v) =>
         v match {
-          case v: jl.Float => fillCol[Float](f, v)
+          case v: jl.Float => fillCol[Double](f, v.toDouble)
           case v: jl.Double => fillCol[Double](f, v)
-          case v: jl.Long => fillCol[Long](f, v)
-          case v: jl.Integer => fillCol[Integer](f, v)
+          case v: jl.Long => fillCol[Double](f, v.toDouble)
+          case v: jl.Integer => fillCol[Double](f, v.toDouble)
           case v: jl.Boolean => fillCol[Boolean](f, v.booleanValue())
           case v: String => fillCol[String](f, v)
         }
@@ -404,13 +402,13 @@ final class DataFrameNaFunctions private[sql](df: DataFrame) {
    * Returns a [[Column]] expression that replaces null value in `col` with `replacement`.
    */
   private def fillCol[T](col: StructField, replacement: T): Column = {
-    val quotedColName = "`" + col.name + "`"
-    val colValue = col.dataType match {
+    col.dataType match {
       case DoubleType | FloatType =>
-        nanvl(df.col(quotedColName), lit(null)) // nanvl only supports these types
-      case _ => df.col(quotedColName)
+        coalesce(nanvl(df.col("`" + col.name + "`"), lit(null)),
+          lit(replacement).cast(col.dataType)).as(col.name)
+      case _ =>
+        coalesce(df.col("`" + col.name + "`"), lit(replacement).cast(col.dataType)).as(col.name)
     }
-    coalesce(colValue, lit(replacement)).cast(col.dataType).as(col.name)
   }
 
   /**

@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.catalyst.analysis
 
+import org.apache.spark.sql.catalyst.CatalystConf
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, AggregateFunction, Complete}
 import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Expand, LogicalPlan}
@@ -35,7 +36,7 @@ import org.apache.spark.sql.types.IntegerType
  *     ("a", "ca1", "cb2", 5),
  *     ("b", "ca1", "cb1", 13))
  *     .toDF("key", "cat1", "cat2", "value")
- *   data.createOrReplaceTempView("data")
+ *   data.registerTempTable("data")
  *
  *   val agg = data.groupBy($"key")
  *     .agg(
@@ -87,7 +88,7 @@ import org.apache.spark.sql.types.IntegerType
  *    this aggregate consists of the original group by clause, all the requested distinct columns
  *    and the group id. Both de-duplication of distinct column and the aggregation of the
  *    non-distinct group take advantage of the fact that we group by the group id (gid) and that we
- *    have nulled out all non-relevant columns the given group.
+ *    have nulled out all non-relevant columns for the the given group.
  * 3. Aggregating the distinct groups and combining this with the results of the non-distinct
  *    aggregation. In this step we use the group id to filter the inputs for the aggregate
  *    functions. The result of the non-distinct group are 'aggregated' by using the first operator,
@@ -96,13 +97,16 @@ import org.apache.spark.sql.types.IntegerType
  * This rule duplicates the input data by two or more times (# distinct groups + an optional
  * non-distinct group). This will put quite a bit of memory pressure of the used aggregate and
  * exchange operators. Keeping the number of distinct groups as low a possible should be priority,
- * we could improve this in the current rule by applying more advanced expression canonicalization
+ * we could improve this in the current rule by applying more advanced expression cannocalization
  * techniques.
  */
-object DistinctAggregationRewriter extends Rule[LogicalPlan] {
+case class DistinctAggregationRewriter(conf: CatalystConf) extends Rule[LogicalPlan] {
 
-  def apply(plan: LogicalPlan): LogicalPlan = plan transformUp {
+  def apply(plan: LogicalPlan): LogicalPlan = plan resolveOperators {
+    case p if !p.resolved => p
+    // We need to wait until this Aggregate operator is resolved.
     case a: Aggregate => rewrite(a)
+    case p => p
   }
 
   def rewrite(a: Aggregate): Aggregate = {
@@ -119,14 +123,20 @@ object DistinctAggregationRewriter extends Rule[LogicalPlan] {
       .filter(_.isDistinct)
       .groupBy(_.aggregateFunction.children.toSet)
 
-    // Aggregation strategy can handle the query with single distinct
-    if (distinctAggGroups.size > 1) {
+    val shouldRewrite = if (conf.specializeSingleDistinctAggPlanning) {
+      // When the flag is set to specialize single distinct agg planning,
+      // we will rely on our Aggregation strategy to handle queries with a single
+      // distinct column.
+      distinctAggGroups.size > 1
+    } else {
+      distinctAggGroups.size >= 1
+    }
+    if (shouldRewrite) {
       // Create the attributes for the grouping id and the group by clause.
-      val gid =
-        new AttributeReference("gid", IntegerType, false)(isGenerated = true)
+      val gid = new AttributeReference("gid", IntegerType, false)()
       val groupByMap = a.groupingExpressions.collect {
         case ne: NamedExpression => ne -> ne.toAttribute
-        case e => e -> new AttributeReference(e.sql, e.dataType, e.nullable)()
+        case e => e -> new AttributeReference(e.prettyString, e.dataType, e.nullable)()
       }
       val groupByAttrs = groupByMap.map(_._2)
 
@@ -180,7 +190,7 @@ object DistinctAggregationRewriter extends Rule[LogicalPlan] {
       val regularAggOperatorMap = regularAggExprs.map { e =>
         // Perform the actual aggregation in the initial aggregate.
         val af = patchAggregateFunctionChildren(e.aggregateFunction)(regularAggChildAttrLookup)
-        val operator = Alias(e.copy(aggregateFunction = af), e.sql)()
+        val operator = Alias(e.copy(aggregateFunction = af), e.prettyString)()
 
         // Select the result of the first aggregate in the last aggregate.
         val result = AggregateExpression(
@@ -265,5 +275,5 @@ object DistinctAggregationRewriter extends Rule[LogicalPlan] {
     // NamedExpression. This is done to prevent collisions between distinct and regular aggregate
     // children, in this case attribute reuse causes the input of the regular aggregate to bound to
     // the (nulled out) input of the distinct aggregate.
-    e -> new AttributeReference(e.sql, e.dataType, true)()
+    e -> new AttributeReference(e.prettyString, e.dataType, true)()
 }

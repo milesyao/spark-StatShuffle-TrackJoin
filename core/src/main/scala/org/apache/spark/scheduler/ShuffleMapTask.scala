@@ -18,18 +18,13 @@
 package org.apache.spark.scheduler
 
 import java.nio.ByteBuffer
-import java.util.Properties
 
 import scala.language.existentials
+
 import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.executor.TaskMetrics
-import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.shuffle.ShuffleWriter
-import org.apache.spark.shuffle.sort.SortShuffleWriter
-
-import scala.reflect.ClassTag
 
 /**
  * A ShuffleMapTask divides the elements of an RDD into multiple buckets (based on a partitioner
@@ -38,38 +33,24 @@ import scala.reflect.ClassTag
  * See [[org.apache.spark.scheduler.Task]] for more information.
  *
  * @param stageId id of the stage this task belongs to
- * @param stageAttemptId attempt id of the stage this task belongs to
  * @param taskBinary broadcast version of the RDD and the ShuffleDependency. Once deserialized,
  *                   the type should be (RDD[_], ShuffleDependency[_, _, _]).
  * @param partition partition of the RDD this task is associated with
  * @param locs preferred task execution locations for locality scheduling
- * @param metrics a [[TaskMetrics]] that is created at driver side and sent to executor side.
- * @param localProperties copy of thread-local properties set by the user on the driver side.
  */
-private[spark] class ShuffleMapTask[U: ClassTag, C: ClassTag](
+private[spark] class ShuffleMapTask(
     stageId: Int,
     stageAttemptId: Int,
     taskBinary: Broadcast[Array[Byte]],
     partition: Partition,
     @transient private var locs: Seq[TaskLocation],
-    metrics: TaskMetrics,
-    localProperties: Properties)
-  extends Task[MapStatus](stageId, stageAttemptId, partition.index, metrics, localProperties)
+    internalAccumulators: Seq[Accumulator[Long]])
+  extends Task[MapStatus](stageId, stageAttemptId, partition.index, internalAccumulators)
   with Logging {
-
-  var _zeroValue: U  = _
-  var _seqOp: (U, C) => U = null
-  var _combOp: (U, U) => U = null
-
-  def setAggregate(zeroValue: U, seqOp:(U, C) => U, combOp:(U, U) => U): Unit = {
-    _zeroValue = zeroValue
-    _seqOp = seqOp
-    _combOp = combOp
-  }
 
   /** A constructor used only in test suites. This does not require passing in an RDD. */
   def this(partitionId: Int) {
-    this(0, 0, null, new Partition { override def index: Int = 0 }, null, null, new Properties)
+    this(0, 0, null, new Partition { override def index: Int = 0 }, null, null)
   }
 
   @transient private val preferredLocs: Seq[TaskLocation] = {
@@ -84,16 +65,14 @@ private[spark] class ShuffleMapTask[U: ClassTag, C: ClassTag](
       ByteBuffer.wrap(taskBinary.value), Thread.currentThread.getContextClassLoader)
     _executorDeserializeTime = System.currentTimeMillis() - deserializeStartTime
 
-//    var writer: ShuffleWriter[Any, Any] = null
+
+    metrics = Some(context.taskMetrics)
     var writer: ShuffleWriter[Any, Any] = null
-    var sortWriter: SortShuffleWriter[Any, Any, C, U] = null
     try {
       val manager = SparkEnv.get.shuffleManager
       writer = manager.getWriter[Any, Any](dep.shuffleHandle, partitionId, context)
-      sortWriter = writer.asInstanceOf[SortShuffleWriter[Any, Any, C, U]]
-      sortWriter.setAggregate(_zeroValue, _seqOp, _combOp)
-      sortWriter.write(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
-      sortWriter.stop(success = true).get
+      writer.write(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
+      writer.stop(success = true).get
     } catch {
       case e: Exception =>
         try {

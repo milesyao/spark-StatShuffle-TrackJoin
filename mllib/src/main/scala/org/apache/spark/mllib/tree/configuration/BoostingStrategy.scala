@@ -21,7 +21,7 @@ import scala.beans.BeanProperty
 
 import org.apache.spark.annotation.Since
 import org.apache.spark.mllib.tree.configuration.Algo._
-import org.apache.spark.mllib.tree.loss.{LogLoss, Loss, SquaredError}
+import org.apache.spark.mllib.tree.loss.{LogLoss, SquaredError, Loss}
 
 /**
  * Configuration options for [[org.apache.spark.mllib.tree.GradientBoostedTrees]].
@@ -59,7 +59,7 @@ case class BoostingStrategy @Since("1.4.0") (
    * Check validity of parameters.
    * Throws exception if invalid.
    */
-  private[spark] def assertValid(): Unit = {
+  private[tree] def assertValid(): Unit = {
     treeStrategy.algo match {
       case Classification =>
         require(treeStrategy.numClasses == 2,

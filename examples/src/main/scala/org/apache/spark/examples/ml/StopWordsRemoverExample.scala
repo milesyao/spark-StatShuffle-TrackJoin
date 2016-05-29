@@ -21,29 +21,28 @@ package org.apache.spark.examples.ml
 // $example on$
 import org.apache.spark.ml.feature.StopWordsRemover
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object StopWordsRemoverExample {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("StopWordsRemoverExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("StopWordsRemoverExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
     val remover = new StopWordsRemover()
       .setInputCol("raw")
       .setOutputCol("filtered")
 
-    val dataSet = spark.createDataFrame(Seq(
+    val dataSet = sqlContext.createDataFrame(Seq(
       (0, Seq("I", "saw", "the", "red", "baloon")),
       (1, Seq("Mary", "had", "a", "little", "lamb"))
     )).toDF("id", "raw")
 
     remover.transform(dataSet).show()
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

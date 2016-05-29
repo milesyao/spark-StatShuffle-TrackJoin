@@ -18,14 +18,16 @@
 package org.apache.spark.ml.feature
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.ml.util.{DefaultReadWriteTest, MLTestingUtils}
+import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.mllib.util.MLlibTestSparkContext
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{Row, SQLContext}
 
 class MinMaxScalerSuite extends SparkFunSuite with MLlibTestSparkContext with DefaultReadWriteTest {
 
   test("MinMaxScaler fit basic case") {
+    val sqlContext = new SQLContext(sc)
+
     val data = Array(
       Vectors.dense(1, 0, Long.MinValue),
       Vectors.dense(2, 0, 0),
@@ -38,7 +40,7 @@ class MinMaxScalerSuite extends SparkFunSuite with MLlibTestSparkContext with De
       Vectors.sparse(3, Array(0, 2), Array(5, 5)),
       Vectors.sparse(3, Array(0), Array(-2.5)))
 
-    val df = spark.createDataFrame(data.zip(expected)).toDF("features", "expected")
+    val df = sqlContext.createDataFrame(data.zip(expected)).toDF("features", "expected")
     val scaler = new MinMaxScaler()
       .setInputCol("features")
       .setOutputCol("scaled")
@@ -57,15 +59,13 @@ class MinMaxScalerSuite extends SparkFunSuite with MLlibTestSparkContext with De
 
   test("MinMaxScaler arguments max must be larger than min") {
     withClue("arguments max must be larger than min") {
-      val dummyDF = spark.createDataFrame(Seq(
-        (1, Vectors.dense(1.0, 2.0)))).toDF("id", "feature")
       intercept[IllegalArgumentException] {
-        val scaler = new MinMaxScaler().setMin(10).setMax(0).setInputCol("feature")
-        scaler.transformSchema(dummyDF.schema)
+        val scaler = new MinMaxScaler().setMin(10).setMax(0)
+        scaler.validateParams()
       }
       intercept[IllegalArgumentException] {
-        val scaler = new MinMaxScaler().setMin(0).setMax(0).setInputCol("feature")
-        scaler.transformSchema(dummyDF.schema)
+        val scaler = new MinMaxScaler().setMin(0).setMax(0)
+        scaler.validateParams()
       }
     }
   }

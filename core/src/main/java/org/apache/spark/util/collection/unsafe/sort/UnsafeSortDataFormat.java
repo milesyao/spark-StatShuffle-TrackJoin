@@ -29,8 +29,7 @@ import org.apache.spark.util.collection.SortDataFormat;
  * Within each long[] buffer, position {@code 2 * i} holds a pointer pointer to the record at
  * index {@code i}, while position {@code 2 * i + 1} in the array holds an 8-byte key prefix.
  */
-public final class UnsafeSortDataFormat
-  extends SortDataFormat<RecordPointerAndKeyPrefix, LongArray> {
+final class UnsafeSortDataFormat extends SortDataFormat<RecordPointerAndKeyPrefix, LongArray> {
 
   public static final UnsafeSortDataFormat INSTANCE = new UnsafeSortDataFormat();
 
@@ -48,8 +47,7 @@ public final class UnsafeSortDataFormat
   }
 
   @Override
-  public RecordPointerAndKeyPrefix getKey(LongArray data, int pos,
-                                          RecordPointerAndKeyPrefix reuse) {
+  public RecordPointerAndKeyPrefix getKey(LongArray data, int pos, RecordPointerAndKeyPrefix reuse) {
     reuse.recordPointer = data.get(pos * 2);
     reuse.keyPrefix = data.get(pos * 2 + 1);
     return reuse;

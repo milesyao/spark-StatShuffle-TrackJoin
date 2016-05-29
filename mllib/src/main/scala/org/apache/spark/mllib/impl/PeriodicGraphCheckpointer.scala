@@ -69,8 +69,7 @@ import org.apache.spark.storage.StorageLevel
  *  // checkpointed: graph4
  * }}}
  *
- * @param checkpointInterval Graphs will be checkpointed at this interval.
- *                           If this interval was set as -1, then checkpointing will be disabled.
+ * @param checkpointInterval Graphs will be checkpointed at this interval
  * @tparam VD  Vertex descriptor type
  * @tparam ED  Edge descriptor type
  *

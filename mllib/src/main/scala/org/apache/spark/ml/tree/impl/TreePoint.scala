@@ -17,8 +17,9 @@
 
 package org.apache.spark.ml.tree.impl
 
-import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.tree.{ContinuousSplit, Split}
+import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.mllib.tree.impl.DecisionTreeMetadata
 import org.apache.spark.rdd.RDD
 
 

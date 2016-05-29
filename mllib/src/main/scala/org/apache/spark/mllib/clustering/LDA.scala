@@ -19,10 +19,10 @@ package org.apache.spark.mllib.clustering
 
 import breeze.linalg.{DenseVector => BDV}
 
+import org.apache.spark.Logging
 import org.apache.spark.annotation.{DeveloperApi, Since}
 import org.apache.spark.api.java.JavaPairRDD
 import org.apache.spark.graphx._
-import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.Utils
@@ -61,13 +61,14 @@ class LDA private (
     ldaOptimizer = new EMLDAOptimizer)
 
   /**
-   * Number of topics to infer, i.e., the number of soft cluster centers.
+   * Number of topics to infer.  I.e., the number of soft cluster centers.
+   *
    */
   @Since("1.3.0")
   def getK: Int = k
 
   /**
-   * Set the number of topics to infer, i.e., the number of soft cluster centers.
+   * Number of topics to infer.  I.e., the number of soft cluster centers.
    * (default = 10)
    */
   @Since("1.3.0")
@@ -130,8 +131,7 @@ class LDA private (
    */
   @Since("1.5.0")
   def setDocConcentration(docConcentration: Vector): this.type = {
-    require(docConcentration.size == 1 || docConcentration.size == k,
-      s"Size of docConcentration must be 1 or ${k} but got ${docConcentration.size}")
+    require(docConcentration.size > 0, "docConcentration must have > 0 elements")
     this.docConcentration = docConcentration
     this
   }
@@ -222,31 +222,29 @@ class LDA private (
   def setBeta(beta: Double): this.type = setTopicConcentration(beta)
 
   /**
-   * Maximum number of iterations allowed.
+   * Maximum number of iterations for learning.
    */
   @Since("1.3.0")
   def getMaxIterations: Int = maxIterations
 
   /**
-   * Set the maximum number of iterations allowed.
+   * Maximum number of iterations for learning.
    * (default = 20)
    */
   @Since("1.3.0")
   def setMaxIterations(maxIterations: Int): this.type = {
-    require(maxIterations >= 0,
-      s"Maximum of iterations must be nonnegative but got ${maxIterations}")
     this.maxIterations = maxIterations
     this
   }
 
   /**
-   * Random seed for cluster initialization.
+   * Random seed
    */
   @Since("1.3.0")
   def getSeed: Long = seed
 
   /**
-   * Set the random seed for cluster initialization.
+   * Random seed
    */
   @Since("1.3.0")
   def setSeed(seed: Long): this.type = {
@@ -261,18 +259,15 @@ class LDA private (
   def getCheckpointInterval: Int = checkpointInterval
 
   /**
-   * Parameter for set checkpoint interval (>= 1) or disable checkpoint (-1). E.g. 10 means that
-   * the cache will get checkpointed every 10 iterations. Checkpointing helps with recovery
+   * Period (in iterations) between checkpoints (default = 10). Checkpointing helps with recovery
    * (when nodes fail). It also helps with eliminating temporary shuffle files on disk, which can be
    * important when LDA is run for many iterations. If the checkpoint directory is not set in
-   * [[org.apache.spark.SparkContext]], this setting is ignored. (default = 10)
+   * [[org.apache.spark.SparkContext]], this setting is ignored.
    *
    * @see [[org.apache.spark.SparkContext#setCheckpointDir]]
    */
   @Since("1.3.0")
   def setCheckpointInterval(checkpointInterval: Int): this.type = {
-    require(checkpointInterval == -1 || checkpointInterval > 0,
-      s"Period between checkpoints must be -1 or positive but got ${checkpointInterval}")
     this.checkpointInterval = checkpointInterval
     this
   }

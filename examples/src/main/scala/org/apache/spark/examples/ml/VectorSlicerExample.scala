@@ -19,31 +19,30 @@
 package org.apache.spark.examples.ml
 
 // $example on$
-import java.util.Arrays
-
 import org.apache.spark.ml.attribute.{Attribute, AttributeGroup, NumericAttribute}
 import org.apache.spark.ml.feature.VectorSlicer
-import org.apache.spark.ml.linalg.Vectors
+import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.StructType
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object VectorSlicerExample {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("VectorSlicerExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("VectorSlicerExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val data = Arrays.asList(Row(Vectors.dense(-2.0, 2.3, 0.0)))
+    val data = Array(Row(Vectors.dense(-2.0, 2.3, 0.0)))
 
     val defaultAttr = NumericAttribute.defaultAttr
     val attrs = Array("f1", "f2", "f3").map(defaultAttr.withName)
     val attrGroup = new AttributeGroup("userFeatures", attrs.asInstanceOf[Array[Attribute]])
 
-    val dataset = spark.createDataFrame(data, StructType(Array(attrGroup.toStructField())))
+    val dataRDD = sc.parallelize(data)
+    val dataset = sqlContext.createDataFrame(dataRDD, StructType(Array(attrGroup.toStructField())))
 
     val slicer = new VectorSlicer().setInputCol("userFeatures").setOutputCol("features")
 
@@ -53,8 +52,7 @@ object VectorSlicerExample {
     val output = slicer.transform(dataset)
     println(output.select("userFeatures", "features").first())
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

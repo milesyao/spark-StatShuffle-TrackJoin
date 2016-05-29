@@ -17,19 +17,18 @@
 
 from __future__ import print_function
 
-from pyspark.sql import SparkSession
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
 # $example on$
 from pyspark.ml.feature import Binarizer
 # $example off$
 
 if __name__ == "__main__":
-    spark = SparkSession\
-        .builder\
-        .appName("BinarizerExample")\
-        .getOrCreate()
+    sc = SparkContext(appName="BinarizerExample")
+    sqlContext = SQLContext(sc)
 
     # $example on$
-    continuousDataFrame = spark.createDataFrame([
+    continuousDataFrame = sqlContext.createDataFrame([
         (0, 0.1),
         (1, 0.8),
         (2, 0.2)
@@ -41,4 +40,4 @@ if __name__ == "__main__":
         print(binarized_feature)
     # $example off$
 
-    spark.stop()
+    sc.stop()

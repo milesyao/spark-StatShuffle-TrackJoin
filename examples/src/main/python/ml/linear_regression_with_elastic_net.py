@@ -17,20 +17,19 @@
 
 from __future__ import print_function
 
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
 # $example on$
 from pyspark.ml.regression import LinearRegression
 # $example off$
-from pyspark.sql import SparkSession
 
 if __name__ == "__main__":
-    spark = SparkSession\
-        .builder\
-        .appName("LinearRegressionWithElasticNet")\
-        .getOrCreate()
+    sc = SparkContext(appName="LinearRegressionWithElasticNet")
+    sqlContext = SQLContext(sc)
 
     # $example on$
     # Load training data
-    training = spark.read.format("libsvm")\
+    training = sqlContext.read.format("libsvm")\
         .load("data/mllib/sample_linear_regression_data.txt")
 
     lr = LinearRegression(maxIter=10, regParam=0.3, elasticNetParam=0.8)
@@ -43,4 +42,4 @@ if __name__ == "__main__":
     print("Intercept: " + str(lrModel.intercept))
     # $example off$
 
-    spark.stop()
+    sc.stop()

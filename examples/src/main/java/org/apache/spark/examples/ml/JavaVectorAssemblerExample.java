@@ -17,15 +17,18 @@
 
 package org.apache.spark.examples.ml;
 
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.SQLContext;
 
 // $example on$
 import java.util.Arrays;
 
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.ml.feature.VectorAssembler;
 import org.apache.spark.mllib.linalg.VectorUDT;
 import org.apache.spark.mllib.linalg.Vectors;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.types.*;
@@ -35,10 +38,9 @@ import static org.apache.spark.sql.types.DataTypes.*;
 
 public class JavaVectorAssemblerExample {
   public static void main(String[] args) {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaVectorAssemblerExample")
-      .getOrCreate();
+    SparkConf conf = new SparkConf().setAppName("JavaVectorAssemblerExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext sqlContext = new SQLContext(jsc);
 
     // $example on$
     StructType schema = createStructType(new StructField[]{
@@ -49,16 +51,17 @@ public class JavaVectorAssemblerExample {
       createStructField("clicked", DoubleType, false)
     });
     Row row = RowFactory.create(0, 18, 1.0, Vectors.dense(0.0, 10.0, 0.5), 1.0);
-    Dataset<Row> dataset = spark.createDataFrame(Arrays.asList(row), schema);
+    JavaRDD<Row> rdd = jsc.parallelize(Arrays.asList(row));
+    DataFrame dataset = sqlContext.createDataFrame(rdd, schema);
 
     VectorAssembler assembler = new VectorAssembler()
       .setInputCols(new String[]{"hour", "mobile", "userFeatures"})
       .setOutputCol("features");
 
-    Dataset<Row> output = assembler.transform(dataset);
+    DataFrame output = assembler.transform(dataset);
     System.out.println(output.select("features", "clicked").first());
     // $example off$
-    spark.stop();
+    jsc.stop();
   }
 }
 

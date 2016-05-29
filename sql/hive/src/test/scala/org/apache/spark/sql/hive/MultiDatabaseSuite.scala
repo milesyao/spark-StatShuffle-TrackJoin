@@ -17,31 +17,30 @@
 
 package org.apache.spark.sql.hive
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 import org.apache.spark.sql.hive.test.TestHiveSingleton
 import org.apache.spark.sql.test.SQLTestUtils
+import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 
 class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingleton {
-  private lazy val df = spark.range(10).coalesce(1).toDF()
+  private lazy val df = sqlContext.range(10).coalesce(1)
 
   private def checkTablePath(dbName: String, tableName: String): Unit = {
-    val metastoreTable = hiveContext.sharedState.externalCatalog.getTable(dbName, tableName)
-    val expectedPath =
-      hiveContext.sharedState.externalCatalog.getDatabase(dbName).locationUri + "/" + tableName
+    val metastoreTable = hiveContext.catalog.client.getTable(dbName, tableName)
+    val expectedPath = hiveContext.catalog.client.getDatabase(dbName).location + "/" + tableName
 
-    assert(metastoreTable.storage.serdeProperties("path") === expectedPath)
+    assert(metastoreTable.serdeProperties("path") === expectedPath)
   }
 
   test(s"saveAsTable() to non-default database - with USE - Overwrite") {
     withTempDatabase { db =>
       activateDatabase(db) {
         df.write.mode(SaveMode.Overwrite).saveAsTable("t")
-        assert(spark.sqlContext.tableNames().contains("t"))
-        checkAnswer(spark.table("t"), df)
+        assert(sqlContext.tableNames().contains("t"))
+        checkAnswer(sqlContext.table("t"), df)
       }
 
-      assert(spark.sqlContext.tableNames(db).contains("t"))
-      checkAnswer(spark.table(s"$db.t"), df)
+      assert(sqlContext.tableNames(db).contains("t"))
+      checkAnswer(sqlContext.table(s"$db.t"), df)
 
       checkTablePath(db, "t")
     }
@@ -50,8 +49,8 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
   test(s"saveAsTable() to non-default database - without USE - Overwrite") {
     withTempDatabase { db =>
       df.write.mode(SaveMode.Overwrite).saveAsTable(s"$db.t")
-      assert(spark.sqlContext.tableNames(db).contains("t"))
-      checkAnswer(spark.table(s"$db.t"), df)
+      assert(sqlContext.tableNames(db).contains("t"))
+      checkAnswer(sqlContext.table(s"$db.t"), df)
 
       checkTablePath(db, "t")
     }
@@ -64,9 +63,9 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
           val path = dir.getCanonicalPath
           df.write.format("parquet").mode(SaveMode.Overwrite).save(path)
 
-          spark.catalog.createExternalTable("t", path, "parquet")
-          assert(spark.sqlContext.tableNames(db).contains("t"))
-          checkAnswer(spark.table("t"), df)
+          sqlContext.createExternalTable("t", path, "parquet")
+          assert(sqlContext.tableNames(db).contains("t"))
+          checkAnswer(sqlContext.table("t"), df)
 
           sql(
             s"""
@@ -76,8 +75,8 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
               |  path '$path'
               |)
             """.stripMargin)
-          assert(spark.sqlContext.tableNames(db).contains("t1"))
-          checkAnswer(spark.table("t1"), df)
+          assert(sqlContext.tableNames(db).contains("t1"))
+          checkAnswer(sqlContext.table("t1"), df)
         }
       }
     }
@@ -88,10 +87,10 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
       withTempPath { dir =>
         val path = dir.getCanonicalPath
         df.write.format("parquet").mode(SaveMode.Overwrite).save(path)
-        spark.catalog.createExternalTable(s"$db.t", path, "parquet")
+        sqlContext.createExternalTable(s"$db.t", path, "parquet")
 
-        assert(spark.sqlContext.tableNames(db).contains("t"))
-        checkAnswer(spark.table(s"$db.t"), df)
+        assert(sqlContext.tableNames(db).contains("t"))
+        checkAnswer(sqlContext.table(s"$db.t"), df)
 
         sql(
           s"""
@@ -101,8 +100,8 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
               |  path '$path'
               |)
             """.stripMargin)
-        assert(spark.sqlContext.tableNames(db).contains("t1"))
-        checkAnswer(spark.table(s"$db.t1"), df)
+        assert(sqlContext.tableNames(db).contains("t1"))
+        checkAnswer(sqlContext.table(s"$db.t1"), df)
       }
     }
   }
@@ -112,12 +111,12 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
       activateDatabase(db) {
         df.write.mode(SaveMode.Overwrite).saveAsTable("t")
         df.write.mode(SaveMode.Append).saveAsTable("t")
-        assert(spark.sqlContext.tableNames().contains("t"))
-        checkAnswer(spark.table("t"), df.union(df))
+        assert(sqlContext.tableNames().contains("t"))
+        checkAnswer(sqlContext.table("t"), df.unionAll(df))
       }
 
-      assert(spark.sqlContext.tableNames(db).contains("t"))
-      checkAnswer(spark.table(s"$db.t"), df.union(df))
+      assert(sqlContext.tableNames(db).contains("t"))
+      checkAnswer(sqlContext.table(s"$db.t"), df.unionAll(df))
 
       checkTablePath(db, "t")
     }
@@ -127,8 +126,8 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
     withTempDatabase { db =>
       df.write.mode(SaveMode.Overwrite).saveAsTable(s"$db.t")
       df.write.mode(SaveMode.Append).saveAsTable(s"$db.t")
-      assert(spark.sqlContext.tableNames(db).contains("t"))
-      checkAnswer(spark.table(s"$db.t"), df.union(df))
+      assert(sqlContext.tableNames(db).contains("t"))
+      checkAnswer(sqlContext.table(s"$db.t"), df.unionAll(df))
 
       checkTablePath(db, "t")
     }
@@ -138,10 +137,10 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
     withTempDatabase { db =>
       activateDatabase(db) {
         df.write.mode(SaveMode.Overwrite).saveAsTable("t")
-        assert(spark.sqlContext.tableNames().contains("t"))
+        assert(sqlContext.tableNames().contains("t"))
 
         df.write.insertInto(s"$db.t")
-        checkAnswer(spark.table(s"$db.t"), df.union(df))
+        checkAnswer(sqlContext.table(s"$db.t"), df.unionAll(df))
       }
     }
   }
@@ -150,13 +149,13 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
     withTempDatabase { db =>
       activateDatabase(db) {
         df.write.mode(SaveMode.Overwrite).saveAsTable("t")
-        assert(spark.sqlContext.tableNames().contains("t"))
+        assert(sqlContext.tableNames().contains("t"))
       }
 
-      assert(spark.sqlContext.tableNames(db).contains("t"))
+      assert(sqlContext.tableNames(db).contains("t"))
 
       df.write.insertInto(s"$db.t")
-      checkAnswer(spark.table(s"$db.t"), df.union(df))
+      checkAnswer(sqlContext.table(s"$db.t"), df.unionAll(df))
     }
   }
 
@@ -164,10 +163,10 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
     withTempDatabase { db =>
       activateDatabase(db) {
         sql("CREATE TABLE t (key INT)")
-        checkAnswer(spark.table("t"), spark.emptyDataFrame)
+        checkAnswer(sqlContext.table("t"), sqlContext.emptyDataFrame)
       }
 
-      checkAnswer(spark.table(s"$db.t"), spark.emptyDataFrame)
+      checkAnswer(sqlContext.table(s"$db.t"), sqlContext.emptyDataFrame)
     }
   }
 
@@ -175,21 +174,21 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
     withTempDatabase { db =>
       activateDatabase(db) {
         sql(s"CREATE TABLE t (key INT)")
-        assert(spark.sqlContext.tableNames().contains("t"))
-        assert(!spark.sqlContext.tableNames("default").contains("t"))
+        assert(sqlContext.tableNames().contains("t"))
+        assert(!sqlContext.tableNames("default").contains("t"))
       }
 
-      assert(!spark.sqlContext.tableNames().contains("t"))
-      assert(spark.sqlContext.tableNames(db).contains("t"))
+      assert(!sqlContext.tableNames().contains("t"))
+      assert(sqlContext.tableNames(db).contains("t"))
 
       activateDatabase(db) {
         sql(s"DROP TABLE t")
-        assert(!spark.sqlContext.tableNames().contains("t"))
-        assert(!spark.sqlContext.tableNames("default").contains("t"))
+        assert(!sqlContext.tableNames().contains("t"))
+        assert(!sqlContext.tableNames("default").contains("t"))
       }
 
-      assert(!spark.sqlContext.tableNames().contains("t"))
-      assert(!spark.sqlContext.tableNames(db).contains("t"))
+      assert(!sqlContext.tableNames().contains("t"))
+      assert(!sqlContext.tableNames(db).contains("t"))
     }
   }
 
@@ -208,19 +207,19 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
                |LOCATION '$path'
              """.stripMargin)
 
-          checkAnswer(spark.table("t"), spark.emptyDataFrame)
+          checkAnswer(sqlContext.table("t"), sqlContext.emptyDataFrame)
 
           df.write.parquet(s"$path/p=1")
           sql("ALTER TABLE t ADD PARTITION (p=1)")
           sql("REFRESH TABLE t")
-          checkAnswer(spark.table("t"), df.withColumn("p", lit(1)))
+          checkAnswer(sqlContext.table("t"), df.withColumn("p", lit(1)))
 
           df.write.parquet(s"$path/p=2")
           sql("ALTER TABLE t ADD PARTITION (p=2)")
-          spark.catalog.refreshTable("t")
+          hiveContext.refreshTable("t")
           checkAnswer(
-            spark.table("t"),
-            df.withColumn("p", lit(1)).union(df.withColumn("p", lit(2))))
+            sqlContext.table("t"),
+            df.withColumn("p", lit(1)).unionAll(df.withColumn("p", lit(2))))
         }
       }
     }
@@ -240,19 +239,19 @@ class MultiDatabaseSuite extends QueryTest with SQLTestUtils with TestHiveSingle
                |LOCATION '$path'
              """.stripMargin)
 
-        checkAnswer(spark.table(s"$db.t"), spark.emptyDataFrame)
+        checkAnswer(sqlContext.table(s"$db.t"), sqlContext.emptyDataFrame)
 
         df.write.parquet(s"$path/p=1")
         sql(s"ALTER TABLE $db.t ADD PARTITION (p=1)")
         sql(s"REFRESH TABLE $db.t")
-        checkAnswer(spark.table(s"$db.t"), df.withColumn("p", lit(1)))
+        checkAnswer(sqlContext.table(s"$db.t"), df.withColumn("p", lit(1)))
 
         df.write.parquet(s"$path/p=2")
         sql(s"ALTER TABLE $db.t ADD PARTITION (p=2)")
-        spark.catalog.refreshTable(s"$db.t")
+        hiveContext.refreshTable(s"$db.t")
         checkAnswer(
-          spark.table(s"$db.t"),
-          df.withColumn("p", lit(1)).union(df.withColumn("p", lit(2))))
+          sqlContext.table(s"$db.t"),
+          df.withColumn("p", lit(1)).unionAll(df.withColumn("p", lit(2))))
       }
     }
   }

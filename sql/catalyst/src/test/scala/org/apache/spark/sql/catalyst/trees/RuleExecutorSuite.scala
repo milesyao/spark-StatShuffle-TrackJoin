@@ -18,9 +18,7 @@
 package org.apache.spark.sql.catalyst.trees
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.catalyst.errors.TreeNodeException
 import org.apache.spark.sql.catalyst.expressions.{Expression, IntegerLiteral, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.{Rule, RuleExecutor}
 
 class RuleExecutorSuite extends SparkFunSuite {
@@ -51,9 +49,6 @@ class RuleExecutorSuite extends SparkFunSuite {
       val batches = Batch("fixedPoint", FixedPoint(10), DecrementLiterals) :: Nil
     }
 
-    val message = intercept[TreeNodeException[LogicalPlan]] {
-      ToFixedPoint.execute(Literal(100))
-    }.getMessage
-    assert(message.contains("Max iterations (10) reached for batch fixedPoint"))
+    assert(ToFixedPoint.execute(Literal(100)) === Literal(90))
   }
 }

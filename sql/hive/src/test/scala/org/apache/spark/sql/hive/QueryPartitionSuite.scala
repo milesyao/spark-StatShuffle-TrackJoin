@@ -19,11 +19,10 @@ package org.apache.spark.sql.hive
 
 import com.google.common.io.Files
 
-import org.apache.spark.sql._
-import org.apache.spark.sql.hive.test.TestHiveSingleton
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.{QueryTest, _}
+import org.apache.spark.sql.hive.test.TestHiveSingleton
+import org.apache.spark.sql.test.SQLTestUtils
 
 class QueryPartitionSuite extends QueryTest with SQLTestUtils with TestHiveSingleton {
   import hiveContext.implicits._
@@ -32,7 +31,7 @@ class QueryPartitionSuite extends QueryTest with SQLTestUtils with TestHiveSingl
     withSQLConf((SQLConf.HIVE_VERIFY_PARTITION_PATH.key, "true")) {
       val testData = sparkContext.parallelize(
         (1 to 10).map(i => TestData(i, i.toString))).toDF()
-      testData.createOrReplaceTempView("testData")
+      testData.registerTempTable("testData")
 
       val tmpDir = Files.createTempDir()
       // create the table for test

@@ -19,8 +19,10 @@ package org.apache.spark.sql.execution
 
 import java.util.Properties
 
+import scala.collection.parallel.CompositeThrowable
+
 import org.apache.spark.{SparkConf, SparkContext, SparkFunSuite}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
 
 class SQLExecutionSuite extends SparkFunSuite {
 
@@ -49,29 +51,12 @@ class SQLExecutionSuite extends SparkFunSuite {
     }
   }
 
-  test("concurrent query execution with fork-join pool (SPARK-13747)") {
-    val spark = SparkSession.builder
-      .master("local[*]")
-      .appName("test")
-      .getOrCreate()
-
-    import spark.implicits._
-    try {
-      // Should not throw IllegalArgumentException
-      (1 to 100).par.foreach { _ =>
-        spark.sparkContext.parallelize(1 to 5).map { i => (i, i) }.toDF("a", "b").count()
-      }
-    } finally {
-      spark.sparkContext.stop()
-    }
-  }
-
   /**
    * Trigger SPARK-10548 by mocking a parent and its child thread executing queries concurrently.
    */
   private def testConcurrentQueryExecution(sc: SparkContext): Unit = {
-    val spark = SparkSession.builder.getOrCreate()
-    import spark.implicits._
+    val sqlContext = new SQLContext(sc)
+    import sqlContext.implicits._
 
     // Initialize local properties. This is necessary for the test to pass.
     sc.getLocalProperties

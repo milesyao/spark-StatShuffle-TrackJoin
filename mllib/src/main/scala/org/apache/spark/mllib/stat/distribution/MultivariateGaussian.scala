@@ -17,10 +17,10 @@
 
 package org.apache.spark.mllib.stat.distribution
 
-import breeze.linalg.{diag, eigSym, max, DenseMatrix => DBM, DenseVector => DBV, Vector => BV}
+import breeze.linalg.{DenseVector => DBV, DenseMatrix => DBM, diag, max, eigSym, Vector => BV}
 
 import org.apache.spark.annotation.{DeveloperApi, Since}
-import org.apache.spark.mllib.linalg.{Matrices, Matrix, Vector, Vectors}
+import org.apache.spark.mllib.linalg.{Vectors, Vector, Matrices, Matrix}
 import org.apache.spark.mllib.util.MLUtils
 
 /**
@@ -61,18 +61,16 @@ class MultivariateGaussian @Since("1.3.0") (
    */
   private val (rootSigmaInv: DBM[Double], u: Double) = calculateCovarianceConstants
 
-  /**
-   * Returns density of this multivariate Gaussian at given point, x
-   */
-  @Since("1.3.0")
+  /** Returns density of this multivariate Gaussian at given point, x
+    */
+   @Since("1.3.0")
   def pdf(x: Vector): Double = {
     pdf(x.toBreeze)
   }
 
-  /**
-   * Returns the log-density of this multivariate Gaussian at given point, x
-   */
-  @Since("1.3.0")
+  /** Returns the log-density of this multivariate Gaussian at given point, x
+    */
+   @Since("1.3.0")
   def logpdf(x: Vector): Double = {
     logpdf(x.toBreeze)
   }

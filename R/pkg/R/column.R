@@ -22,11 +22,11 @@ NULL
 
 setOldClass("jobj")
 
-#' @title S4 class that represents a SparkDataFrame column
-#' @description The column class supports unary, binary operations on SparkDataFrame columns
+#' @title S4 class that represents a DataFrame column
+#' @description The column class supports unary, binary operations on DataFrame columns
 #' @rdname column
 #'
-#' @slot jc reference to JVM SparkDataFrame column
+#' @slot jc reference to JVM DataFrame column
 #' @export
 setClass("Column",
          slots = list(jc = "jobj"))
@@ -209,7 +209,7 @@ setMethod("cast",
 setMethod("%in%",
           signature(x = "Column"),
           function(x, table) {
-            jc <- callJMethod(x@jc, "isin", as.list(table))
+            jc <- callJMethod(x@jc, "in", as.list(table))
             return(column(jc))
           })
 

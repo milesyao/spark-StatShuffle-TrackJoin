@@ -73,13 +73,13 @@ import org.apache.spark.util.{SerializableConfiguration, TimeStampedHashMap, Uti
  */
 private[streaming]
 class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
-    _ssc: StreamingContext,
+    ssc_ : StreamingContext,
     directory: String,
     filter: Path => Boolean = FileInputDStream.defaultFilter,
     newFilesOnly: Boolean = true,
     conf: Option[Configuration] = None)
     (implicit km: ClassTag[K], vm: ClassTag[V], fm: ClassTag[F])
-  extends InputDStream[(K, V)](_ssc) {
+  extends InputDStream[(K, V)](ssc_) {
 
   private val serializableConfOpt = conf.map(new SerializableConfiguration(_))
 
@@ -117,7 +117,7 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
   // Map of batch-time to selected file info for the remembered batches
   // This is a concurrent map because it's also accessed in unit tests
   @transient private[streaming] var batchTimeToSelectedFiles =
-    new mutable.HashMap[Time, Array[String]]
+    new mutable.HashMap[Time, Array[String]] with mutable.SynchronizedMap[Time, Array[String]]
 
   // Set of files that were selected in the remembered batches
   @transient private var recentlySelectedFiles = new mutable.HashSet[String]()
@@ -128,8 +128,8 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
   // Timestamp of the last round of finding files
   @transient private var lastNewFileFindingTime = 0L
 
-  @transient private var _path: Path = null
-  @transient private var _fs: FileSystem = null
+  @transient private var path_ : Path = null
+  @transient private var fs_ : FileSystem = null
 
   override def start() { }
 
@@ -148,9 +148,7 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
     // Find new files
     val newFiles = findNewFiles(validTime.milliseconds)
     logInfo("New files at time " + validTime + ":\n" + newFiles.mkString("\n"))
-    batchTimeToSelectedFiles.synchronized {
-      batchTimeToSelectedFiles += ((validTime, newFiles))
-    }
+    batchTimeToSelectedFiles += ((validTime, newFiles))
     recentlySelectedFiles ++= newFiles
     val rdds = Some(filesToRDD(newFiles))
     // Copy newFiles to immutable.List to prevent from being modified by the user
@@ -164,15 +162,14 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
 
   /** Clear the old time-to-files mappings along with old RDDs */
   protected[streaming] override def clearMetadata(time: Time) {
-    batchTimeToSelectedFiles.synchronized {
-      val oldFiles = batchTimeToSelectedFiles.filter(_._1 < (time - rememberDuration))
-      batchTimeToSelectedFiles --= oldFiles.keys
-      recentlySelectedFiles --= oldFiles.values.flatten
-      logInfo("Cleared " + oldFiles.size + " old files that were older than " +
-        (time - rememberDuration) + ": " + oldFiles.keys.mkString(", "))
-      logDebug("Cleared files are:\n" +
-        oldFiles.map(p => (p._1, p._2.mkString(", "))).mkString("\n"))
-    }
+    super.clearMetadata(time)
+    val oldFiles = batchTimeToSelectedFiles.filter(_._1 < (time - rememberDuration))
+    batchTimeToSelectedFiles --= oldFiles.keys
+    recentlySelectedFiles --= oldFiles.values.flatten
+    logInfo("Cleared " + oldFiles.size + " old files that were older than " +
+      (time - rememberDuration) + ": " + oldFiles.keys.mkString(", "))
+    logDebug("Cleared files are:\n" +
+      oldFiles.map(p => (p._1, p._2.mkString(", "))).mkString("\n"))
     // Delete file mod times that weren't accessed in the last round of getting new files
     fileToModTime.clearOldValues(lastNewFileFindingTime - 1)
   }
@@ -195,16 +192,10 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
       )
       logDebug(s"Getting new files for time $currentTime, " +
         s"ignoring files older than $modTimeIgnoreThreshold")
-
-      val newFileFilter = new PathFilter {
+      val filter = new PathFilter {
         def accept(path: Path): Boolean = isNewFile(path, currentTime, modTimeIgnoreThreshold)
       }
-      val directoryFilter = new PathFilter {
-        override def accept(path: Path): Boolean = fs.getFileStatus(path).isDirectory
-      }
-      val directories = fs.globStatus(directoryPath, directoryFilter).map(_.getPath)
-      val newFiles = directories.flatMap(dir =>
-        fs.listStatus(dir, newFileFilter).map(_.getPath.toString))
+      val newFiles = fs.listStatus(directoryPath, filter).map(_.getPath.toString)
       val timeTaken = clock.getTimeMillis() - lastNewFileFindingTime
       logInfo("Finding new files took " + timeTaken + " ms")
       logDebug("# cached file times = " + fileToModTime.size)
@@ -282,7 +273,7 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
           config)
         case None => context.sparkContext.newAPIHadoopFile[K, V, F](file)
       }
-      if (rdd.partitions.isEmpty) {
+      if (rdd.partitions.size == 0) {
         logError("File " + file + " has no data in it. Spark Streaming can only ingest " +
           "files that have been \"moved\" to the directory assigned to the file stream. " +
           "Refer to the streaming programming guide for more details.")
@@ -298,17 +289,17 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
   }
 
   private def directoryPath: Path = {
-    if (_path == null) _path = new Path(directory)
-    _path
+    if (path_ == null) path_ = new Path(directory)
+    path_
   }
 
   private def fs: FileSystem = {
-    if (_fs == null) _fs = directoryPath.getFileSystem(ssc.sparkContext.hadoopConfiguration)
-    _fs
+    if (fs_ == null) fs_ = directoryPath.getFileSystem(ssc.sparkContext.hadoopConfiguration)
+    fs_
   }
 
   private def reset()  {
-    _fs = null
+    fs_ = null
   }
 
   @throws(classOf[IOException])
@@ -316,7 +307,8 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
     logDebug(this.getClass().getSimpleName + ".readObject used")
     ois.defaultReadObject()
     generatedRDDs = new mutable.HashMap[Time, RDD[(K, V)]]()
-    batchTimeToSelectedFiles = new mutable.HashMap[Time, Array[String]]
+    batchTimeToSelectedFiles =
+      new mutable.HashMap[Time, Array[String]] with mutable.SynchronizedMap[Time, Array[String]]
     recentlySelectedFiles = new mutable.HashSet[String]()
     fileToModTime = new TimeStampedHashMap[String, Long](true)
   }
@@ -332,20 +324,21 @@ class FileInputDStream[K, V, F <: NewInputFormat[K, V]](
 
     override def update(time: Time) {
       hadoopFiles.clear()
-      batchTimeToSelectedFiles.synchronized { hadoopFiles ++= batchTimeToSelectedFiles }
+      hadoopFiles ++= batchTimeToSelectedFiles
     }
 
     override def cleanup(time: Time) { }
 
     override def restore() {
       hadoopFiles.toSeq.sortBy(_._1)(Time.ordering).foreach {
-        case (t, f) =>
+        case (t, f) => {
           // Restore the metadata in both files and generatedRDDs
           logInfo("Restoring files for time " + t + " - " +
             f.mkString("[", ", ", "]") )
-          batchTimeToSelectedFiles.synchronized { batchTimeToSelectedFiles += ((t, f)) }
+          batchTimeToSelectedFiles += ((t, f))
           recentlySelectedFiles ++= f
           generatedRDDs += ((t, filesToRDD(f)))
+        }
       }
     }
 

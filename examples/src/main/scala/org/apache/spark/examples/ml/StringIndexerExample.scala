@@ -21,17 +21,17 @@ package org.apache.spark.examples.ml
 // $example on$
 import org.apache.spark.ml.feature.StringIndexer
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object StringIndexerExample {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("StringIndexerExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("StringIndexerExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val df = spark.createDataFrame(
+    val df = sqlContext.createDataFrame(
       Seq((0, "a"), (1, "b"), (2, "c"), (3, "a"), (4, "a"), (5, "c"))
     ).toDF("id", "category")
 
@@ -42,8 +42,7 @@ object StringIndexerExample {
     val indexed = indexer.fit(df).transform(df)
     indexed.show()
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

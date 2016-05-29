@@ -17,19 +17,34 @@
 
 package org.apache.spark.mllib.clustering;
 
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
-import org.apache.spark.SharedSparkSession;
+import static org.junit.Assert.assertEquals;
+
 import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.mllib.linalg.Vector;
 import org.apache.spark.mllib.linalg.Vectors;
 
-public class JavaGaussianMixtureSuite extends SharedSparkSession {
+public class JavaGaussianMixtureSuite implements Serializable {
+  private transient JavaSparkContext sc;
+
+  @Before
+  public void setUp() {
+    sc = new JavaSparkContext("local", "JavaGaussianMixture");
+  }
+
+  @After
+  public void tearDown() {
+    sc.stop();
+    sc = null;
+  }
 
   @Test
   public void runGaussianMixture() {
@@ -39,7 +54,7 @@ public class JavaGaussianMixtureSuite extends SharedSparkSession {
       Vectors.dense(1.0, 4.0, 6.0)
     );
 
-    JavaRDD<Vector> data = jsc.parallelize(points, 2);
+    JavaRDD<Vector> data = sc.parallelize(points, 2);
     GaussianMixtureModel model = new GaussianMixture().setK(2).setMaxIterations(1).setSeed(1234)
       .run(data);
     assertEquals(model.gaussians().length, 2);

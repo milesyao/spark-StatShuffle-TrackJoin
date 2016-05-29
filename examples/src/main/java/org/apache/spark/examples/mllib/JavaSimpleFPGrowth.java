@@ -67,7 +67,5 @@ public class JavaSimpleFPGrowth {
         rule.javaAntecedent() + " => " + rule.javaConsequent() + ", " + rule.confidence());
     }
     // $example off$
-
-    sc.stop();
   }
 }

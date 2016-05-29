@@ -18,30 +18,34 @@
 package org.apache.spark.rdd
 
 import scala.reflect.ClassTag
+
 import org.apache.spark._
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.serializer.Serializer
-import org.apache.spark.storage.StorageLevel
 
 private[spark] class SaRDDPartition(val idx: Int) extends Partition {
   override val index: Int = idx
-
-  override def hashCode(): Int = index
-
-  override def equals(other: Any): Boolean = super.equals(other)
+  override def hashCode(): Int = idx
 }
 
-class SaRDD[K: ClassTag, V: ClassTag, C: ClassTag] (
-           @transient var prev: RDD[(K, V)],
-           part: Partitioner,
-           val zeroValue: C,
-           val seqOp: (C, V) => C,
-           val combOp: (C, C) => C)
-extends RDD[(K,V)](prev.context, Nil) {
+/**
+  * :: DeveloperApi ::
+  * The resulting RDD from a shuffle (e.g. repartitioning of data).
+  * @param prev the parent RDD.
+  * @param part the partitioner used to partition the RDD
+  * @tparam K the key class.
+  * @tparam V the value class.
+  * @tparam C the combiner class.
+  */
+// TODO: Make this return RDD[Product2[K, C]] or have some way to configure mutable pairs
+@DeveloperApi
+class SaRDD[K: ClassTag, V: ClassTag, C: ClassTag](
+                                                          @transient var prev: RDD[_ <: Product2[K, V]],
+                                                          part: Partitioner,
+                                                          val flag:Int)
+  extends RDD[(K, C)](prev.context, Nil) {
 
-  override var storageLevel = StorageLevel.MEMORY_ONLY
-
-  private var userSpecifiedSerializer: Option[Serializer] = None
+  private var serializer: Option[Serializer] = None
 
   private var keyOrdering: Option[Ordering[K]] = None
 
@@ -49,11 +53,9 @@ extends RDD[(K,V)](prev.context, Nil) {
 
   private var mapSideCombine: Boolean = false
 
-  var aggregateRes: C = _
-
   /** Set a serializer for this RDD's shuffle, or null to use the default (spark.serializer) */
   def setSerializer(serializer: Serializer): SaRDD[K, V, C] = {
-    this.userSpecifiedSerializer = Option(serializer)
+    this.serializer = Option(serializer)
     this
   }
 
@@ -76,19 +78,7 @@ extends RDD[(K,V)](prev.context, Nil) {
   }
 
   override def getDependencies: Seq[Dependency[_]] = {
-    val serializer = userSpecifiedSerializer.getOrElse {
-      val serializerManager = SparkEnv.get.serializerManager
-      if (mapSideCombine) {
-        serializerManager.getSerializer(implicitly[ClassTag[K]], implicitly[ClassTag[C]])
-      } else {
-        serializerManager.getSerializer(implicitly[ClassTag[K]], implicitly[ClassTag[V]])
-      }
-    }
-    val saDependency:ShuffleDependency[K,V,C] =
-      new ShuffleDependency(prev, part, serializer, keyOrdering, aggregator, mapSideCombine)
-
-    saDependency.setAggregate(zeroValue, seqOp, combOp)
-    List(saDependency)
+    List(new ShuffleDependency(prev, part, serializer, keyOrdering, aggregator, mapSideCombine, flag))
   }
 
   override val partitioner = Some(part)
@@ -103,32 +93,21 @@ extends RDD[(K,V)](prev.context, Nil) {
     tracker.getPreferredLocationsForShuffle(dep, partition.index)
   }
 
-  override def compute(split: Partition, context: TaskContext): Iterator[(K, C)] = {
+  def getAggregateRes(): Option[Array[Int]] = {
     val tracker = SparkEnv.get.mapOutputTracker.asInstanceOf[MapOutputTrackerMaster]
+    val dep = dependencies.head.asInstanceOf[ShuffleDependency[K, V, C]]
+    tracker.getBlockStatistics(dep.shuffleId)
+  }
+
+  override def compute(split: Partition, context: TaskContext): Iterator[(K, C)] = {
     val dep = dependencies.head.asInstanceOf[ShuffleDependency[K, V, C]]
     SparkEnv.get.shuffleManager.getReader(dep.shuffleHandle, split.index, split.index + 1, context)
       .read()
       .asInstanceOf[Iterator[(K, C)]]
   }
 
-  def getAggregateRes(): C = {
-    val tracker = SparkEnv.get.mapOutputTracker.asInstanceOf[MapOutputTrackerMaster]
-    val dep = dependencies.head.asInstanceOf[ShuffleDependency[K, V, C]]
-    var saRes = zeroValue
-    val intermediate:Array[C] = tracker.getSaRes(dep.shuffleId).get
-    for(subRes <- intermediate) {
-      saRes = combOp(subRes, saRes)
-    }
-    saRes
-  }
-
   override def clearDependencies() {
     super.clearDependencies()
     prev = null
   }
-
-  override def iterator(split: Partition, context: TaskContext): Iterator[(K,V)] = {
-      getOrCompute(split, context)
-  }
-
 }

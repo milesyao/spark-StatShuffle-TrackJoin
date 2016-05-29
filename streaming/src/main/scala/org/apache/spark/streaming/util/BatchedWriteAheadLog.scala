@@ -18,19 +18,17 @@
 package org.apache.spark.streaming.util
 
 import java.nio.ByteBuffer
-import java.util.{Iterator => JIterator}
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.{Iterator => JIterator}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
-import scala.concurrent.Promise
+import scala.concurrent.{Await, Promise}
 import scala.concurrent.duration._
 import scala.util.control.NonFatal
 
-import org.apache.spark.SparkConf
-import org.apache.spark.internal.Logging
-import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.util.{ThreadUtils, Utils}
+import org.apache.spark.{Logging, SparkConf}
+import org.apache.spark.util.Utils
 
 /**
  * A wrapper for a WriteAheadLog that batches records before writing data. Handles aggregation
@@ -80,8 +78,7 @@ private[util] class BatchedWriteAheadLog(val wrappedLog: WriteAheadLog, conf: Sp
       }
     }
     if (putSuccessfully) {
-      ThreadUtils.awaitResult(
-        promise.future, WriteAheadLogUtils.getBatchingTimeout(conf).milliseconds)
+      Await.result(promise.future, WriteAheadLogUtils.getBatchingTimeout(conf).milliseconds)
     } else {
       throw new IllegalStateException("close() was called on BatchedWriteAheadLog before " +
         s"write request with time $time could be fulfilled.")
@@ -202,10 +199,17 @@ private[util] object BatchedWriteAheadLog {
    */
   case class Record(data: ByteBuffer, time: Long, promise: Promise[WriteAheadLogRecordHandle])
 
+  /** Copies the byte array of a ByteBuffer. */
+  private def getByteArray(buffer: ByteBuffer): Array[Byte] = {
+    val byteArray = new Array[Byte](buffer.remaining())
+    buffer.get(byteArray)
+    byteArray
+  }
+
   /** Aggregate multiple serialized ReceivedBlockTrackerLogEvents in a single ByteBuffer. */
   def aggregate(records: Seq[Record]): ByteBuffer = {
     ByteBuffer.wrap(Utils.serialize[Array[Array[Byte]]](
-      records.map(record => JavaUtils.bufferToArray(record.data)).toArray))
+      records.map(record => getByteArray(record.data)).toArray))
   }
 
   /**
@@ -214,13 +218,10 @@ private[util] object BatchedWriteAheadLog {
    * method therefore needs to be backwards compatible.
    */
   def deaggregate(buffer: ByteBuffer): Array[ByteBuffer] = {
-    val prevPosition = buffer.position()
     try {
-      Utils.deserialize[Array[Array[Byte]]](JavaUtils.bufferToArray(buffer)).map(ByteBuffer.wrap)
+      Utils.deserialize[Array[Array[Byte]]](getByteArray(buffer)).map(ByteBuffer.wrap)
     } catch {
       case _: ClassCastException => // users may restart a stream with batching enabled
-        // Restore `position` so that the user can read `buffer` later
-        buffer.position(prevPosition)
         Array(buffer)
     }
   }

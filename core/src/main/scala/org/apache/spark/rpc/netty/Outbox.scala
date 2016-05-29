@@ -23,10 +23,9 @@ import javax.annotation.concurrent.GuardedBy
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.SparkException
-import org.apache.spark.internal.Logging
+import org.apache.spark.{Logging, SparkException}
 import org.apache.spark.network.client.{RpcResponseCallback, TransportClient}
-import org.apache.spark.rpc.{RpcAddress, RpcEnvStoppedException}
+import org.apache.spark.rpc.RpcAddress
 
 private[netty] sealed trait OutboxMessage {
 
@@ -44,10 +43,7 @@ private[netty] case class OneWayOutboxMessage(content: ByteBuffer) extends Outbo
   }
 
   override def onFailure(e: Throwable): Unit = {
-    e match {
-      case e1: RpcEnvStoppedException => logWarning(e1.getMessage)
-      case e1: Throwable => logWarning(s"Failed to send one-way RPC.", e1)
-    }
+    logWarning(s"Failed to send one-way RPC.", e)
   }
 
 }
@@ -241,7 +237,10 @@ private[netty] class Outbox(nettyEnv: NettyRpcEnv, val address: RpcAddress) {
   }
 
   private def closeClient(): Unit = synchronized {
-    // Just set client to null. Don't close it in order to reuse the connection.
+    // Not sure if `client.close` is idempotent. Just for safety.
+    if (client != null) {
+      client.close()
+    }
     client = null
   }
 

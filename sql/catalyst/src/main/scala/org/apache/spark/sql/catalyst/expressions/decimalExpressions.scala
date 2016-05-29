@@ -18,7 +18,7 @@
 package org.apache.spark.sql.catalyst.expressions
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenContext, GeneratedExpressionCode}
 import org.apache.spark.sql.types._
 
 /**
@@ -34,7 +34,7 @@ case class UnscaledValue(child: Expression) extends UnaryExpression {
   protected override def nullSafeEval(input: Any): Any =
     input.asInstanceOf[Decimal].toUnscaledLong
 
-  override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+  override def genCode(ctx: CodeGenContext, ev: GeneratedExpressionCode): String = {
     defineCodeGen(ctx, ev, c => s"$c.toUnscaledLong()")
   }
 }
@@ -47,13 +47,12 @@ case class UnscaledValue(child: Expression) extends UnaryExpression {
 case class MakeDecimal(child: Expression, precision: Int, scale: Int) extends UnaryExpression {
 
   override def dataType: DataType = DecimalType(precision, scale)
-  override def nullable: Boolean = true
   override def toString: String = s"MakeDecimal($child,$precision,$scale)"
 
   protected override def nullSafeEval(input: Any): Any =
     Decimal(input.asInstanceOf[Long], precision, scale)
 
-  override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+  override def genCode(ctx: CodeGenContext, ev: GeneratedExpressionCode): String = {
     nullSafeCodeGen(ctx, ev, eval => {
       s"""
         ${ev.value} = (new Decimal()).setOrNull($eval, $precision, $scale);
@@ -70,10 +69,9 @@ case class MakeDecimal(child: Expression, precision: Int, scale: Int) extends Un
 case class PromotePrecision(child: Expression) extends UnaryExpression {
   override def dataType: DataType = child.dataType
   override def eval(input: InternalRow): Any = child.eval(input)
-  override def genCode(ctx: CodegenContext): ExprCode = child.genCode(ctx)
-  override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = ev.copy("")
+  override def gen(ctx: CodeGenContext): GeneratedExpressionCode = child.gen(ctx)
+  override protected def genCode(ctx: CodeGenContext, ev: GeneratedExpressionCode): String = ""
   override def prettyName: String = "promote_precision"
-  override def sql: String = child.sql
 }
 
 /**
@@ -93,7 +91,7 @@ case class CheckOverflow(child: Expression, dataType: DecimalType) extends Unary
     }
   }
 
-  override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+  override protected def genCode(ctx: CodeGenContext, ev: GeneratedExpressionCode): String = {
     nullSafeCodeGen(ctx, ev, eval => {
       val tmp = ctx.freshName("tmp")
       s"""
@@ -108,6 +106,4 @@ case class CheckOverflow(child: Expression, dataType: DecimalType) extends Unary
   }
 
   override def toString: String = s"CheckOverflow($child, $dataType)"
-
-  override def sql: String = child.sql
 }

@@ -38,8 +38,7 @@ class HiveWindowFunctionQuerySuite extends HiveComparisonTest with BeforeAndAfte
   private val testTempDir = Utils.createTempDir()
 
   override def beforeAll() {
-    super.beforeAll()
-    TestHive.setCacheTables(true)
+    TestHive.cacheTables = true
     // Timezone is fixed to America/Los_Angeles for those timezone sensitive tests (timestamp_*)
     TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
     // Add Locale setting
@@ -101,14 +100,10 @@ class HiveWindowFunctionQuerySuite extends HiveComparisonTest with BeforeAndAfte
   }
 
   override def afterAll() {
-    try {
-      TestHive.setCacheTables(false)
-      TimeZone.setDefault(originalTimeZone)
-      Locale.setDefault(originalLocale)
-      TestHive.reset()
-    } finally {
-      super.afterAll()
-    }
+    TestHive.cacheTables = false
+    TimeZone.setDefault(originalTimeZone)
+    Locale.setDefault(originalLocale)
+    TestHive.reset()
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -459,9 +454,6 @@ class HiveWindowFunctionQuerySuite extends HiveComparisonTest with BeforeAndAfte
       |window w1 as (distribute by p_mfgr sort by p_name rows between 2 preceding and 2 following)
     """.stripMargin, reset = false)
 
-  /* Disabled because:
-     - Spark uses a different default stddev.
-     - Tiny numerical differences in stddev results.
   createQueryTest("windowing.q -- 15. testExpressions",
     s"""
       |select  p_mfgr,p_name, p_size,
@@ -480,7 +472,7 @@ class HiveWindowFunctionQuerySuite extends HiveComparisonTest with BeforeAndAfte
       |window w1 as (distribute by p_mfgr sort by p_mfgr, p_name
       |             rows between 2 preceding and 2 following)
     """.stripMargin, reset = false)
-  */
+
   createQueryTest("windowing.q -- 16. testMultipleWindows",
     s"""
       |select  p_mfgr,p_name, p_size,
@@ -538,9 +530,6 @@ class HiveWindowFunctionQuerySuite extends HiveComparisonTest with BeforeAndAfte
   // when running this test suite under Java 7 and 8.
   // We change the original sql query a little bit for making the test suite passed
   // under different JDK
-  /* Disabled because:
-     - Spark uses a different default stddev.
-     - Tiny numerical differences in stddev results.
   createQueryTest("windowing.q -- 20. testSTATs",
     """
       |select p_mfgr,p_name, p_size, sdev, sdev_pop, uniq_data, var, cor, covarp
@@ -558,12 +547,12 @@ class HiveWindowFunctionQuerySuite extends HiveComparisonTest with BeforeAndAfte
       |) t lateral view explode(uniq_size) d as uniq_data
       |order by p_mfgr,p_name, p_size, sdev, sdev_pop, uniq_data, var, cor, covarp
     """.stripMargin, reset = false)
-  */
+
   createQueryTest("windowing.q -- 21. testDISTs",
     """
       |select  p_mfgr,p_name, p_size,
       |histogram_numeric(p_retailprice, 5) over w1 as hist,
-      |percentile(p_partkey, cast(0.5 as double)) over w1 as per,
+      |percentile(p_partkey, 0.5) over w1 as per,
       |row_number() over(distribute by p_mfgr sort by p_name) as rn
       |from part
       |window w1 as (distribute by p_mfgr sort by p_mfgr, p_name
@@ -777,8 +766,7 @@ class HiveWindowFunctionQueryFileSuite
   private val testTempDir = Utils.createTempDir()
 
   override def beforeAll() {
-    super.beforeAll()
-    TestHive.setCacheTables(true)
+    TestHive.cacheTables = true
     // Timezone is fixed to America/Los_Angeles for those timezone sensitive tests (timestamp_*)
     TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
     // Add Locale setting
@@ -795,14 +783,10 @@ class HiveWindowFunctionQueryFileSuite
   }
 
   override def afterAll() {
-    try {
-      TestHive.setCacheTables(false)
-      TimeZone.setDefault(originalTimeZone)
-      Locale.setDefault(originalLocale)
-      TestHive.reset()
-    } finally {
-      super.afterAll()
-    }
+    TestHive.cacheTables = false
+    TimeZone.setDefault(originalTimeZone)
+    Locale.setDefault(originalLocale)
+    TestHive.reset()
   }
 
   override def blackList: Seq[String] = Seq(

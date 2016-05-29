@@ -22,8 +22,8 @@ import java.text.SimpleDateFormat
 import java.util.{Calendar, TimeZone}
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.catalyst.util.DateTimeUtils._
 import org.apache.spark.unsafe.types.UTF8String
+import org.apache.spark.sql.catalyst.util.DateTimeUtils._
 
 class DateTimeUtilsSuite extends SparkFunSuite {
 
@@ -353,25 +353,6 @@ class DateTimeUtilsSuite extends SparkFunSuite {
         c.getTimeInMillis * 1000 + 123456)
   }
 
-  test("SPARK-15379: special invalid date string") {
-    // Test stringToDate
-    assert(stringToDate(
-      UTF8String.fromString("2015-02-29 00:00:00")).isEmpty)
-    assert(stringToDate(
-      UTF8String.fromString("2015-04-31 00:00:00")).isEmpty)
-    assert(stringToDate(UTF8String.fromString("2015-02-29")).isEmpty)
-    assert(stringToDate(UTF8String.fromString("2015-04-31")).isEmpty)
-
-
-    // Test stringToTimestamp
-    assert(stringToTimestamp(
-      UTF8String.fromString("2015-02-29 00:00:00")).isEmpty)
-    assert(stringToTimestamp(
-      UTF8String.fromString("2015-04-31 00:00:00")).isEmpty)
-    assert(stringToTimestamp(UTF8String.fromString("2015-02-29")).isEmpty)
-    assert(stringToTimestamp(UTF8String.fromString("2015-04-31")).isEmpty)
-  }
-
   test("hours") {
     val c = Calendar.getInstance()
     c.set(2015, 2, 18, 13, 2, 11)
@@ -403,6 +384,9 @@ class DateTimeUtilsSuite extends SparkFunSuite {
       Timestamp.valueOf("1700-02-28 12:14:50.123456")).foreach { t =>
       val us = fromJavaTimestamp(t)
       assert(toJavaTimestamp(us) === t)
+      assert(getHours(us) === t.getHours)
+      assert(getMinutes(us) === t.getMinutes)
+      assert(getSeconds(us) === t.getSeconds)
     }
   }
 

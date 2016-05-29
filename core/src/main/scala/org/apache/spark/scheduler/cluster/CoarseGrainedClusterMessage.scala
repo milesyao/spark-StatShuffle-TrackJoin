@@ -22,15 +22,13 @@ import java.nio.ByteBuffer
 import org.apache.spark.TaskState.TaskState
 import org.apache.spark.rpc.RpcEndpointRef
 import org.apache.spark.scheduler.ExecutorLossReason
-import org.apache.spark.util.SerializableBuffer
+import org.apache.spark.util.{SerializableBuffer, Utils}
 
 private[spark] sealed trait CoarseGrainedClusterMessage extends Serializable
 
 private[spark] object CoarseGrainedClusterMessages {
 
   case object RetrieveSparkProps extends CoarseGrainedClusterMessage
-
-  case object RetrieveLastAllocatedExecutorId extends CoarseGrainedClusterMessage
 
   // Driver to executors
   case class LaunchTask(data: SerializableBuffer) extends CoarseGrainedClusterMessage
@@ -50,6 +48,7 @@ private[spark] object CoarseGrainedClusterMessages {
   case class RegisterExecutor(
       executorId: String,
       executorRef: RpcEndpointRef,
+      hostPort: String,
       cores: Int,
       logUrls: Map[String, String])
     extends CoarseGrainedClusterMessage

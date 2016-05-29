@@ -24,10 +24,9 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent._
 import scala.util.control.NonFatal
 
-import org.apache.spark.SparkConf
-import org.apache.spark.internal.Logging
+import org.apache.spark.{SparkEnv, Logging, SparkConf}
 import org.apache.spark.storage.StreamBlockId
-import org.apache.spark.util.{ThreadUtils, Utils}
+import org.apache.spark.util.{Utils, ThreadUtils}
 
 /**
  * Abstract class that is responsible for supervising a Receiver in the worker.
@@ -70,28 +69,28 @@ private[streaming] abstract class ReceiverSupervisor(
   @volatile private[streaming] var receiverState = Initialized
 
   /** Push a single data item to backend data store. */
-  def pushSingle(data: Any): Unit
+  def pushSingle(data: Any)
 
   /** Store the bytes of received data as a data block into Spark's memory. */
   def pushBytes(
       bytes: ByteBuffer,
       optionalMetadata: Option[Any],
       optionalBlockId: Option[StreamBlockId]
-    ): Unit
+    )
 
   /** Store a iterator of received data as a data block into Spark's memory. */
   def pushIterator(
       iterator: Iterator[_],
       optionalMetadata: Option[Any],
       optionalBlockId: Option[StreamBlockId]
-    ): Unit
+    )
 
   /** Store an ArrayBuffer of received data as a data block into Spark's memory. */
   def pushArrayBuffer(
       arrayBuffer: ArrayBuffer[_],
       optionalMetadata: Option[Any],
       optionalBlockId: Option[StreamBlockId]
-    ): Unit
+    )
 
   /**
    * Create a custom [[BlockGenerator]] that the receiver implementation can directly control
@@ -103,7 +102,7 @@ private[streaming] abstract class ReceiverSupervisor(
   def createBlockGenerator(blockGeneratorListener: BlockGeneratorListener): BlockGenerator
 
   /** Report errors. */
-  def reportError(message: String, throwable: Throwable): Unit
+  def reportError(message: String, throwable: Throwable)
 
   /**
    * Called when supervisor is started.
@@ -144,10 +143,10 @@ private[streaming] abstract class ReceiverSupervisor(
   def startReceiver(): Unit = synchronized {
     try {
       if (onReceiverStart()) {
-        logInfo(s"Starting receiver $streamId")
+        logInfo("Starting receiver")
         receiverState = Started
         receiver.onStart()
-        logInfo(s"Called receiver $streamId onStart")
+        logInfo("Called receiver onStart")
       } else {
         // The driver refused us
         stop("Registered unsuccessfully because Driver refused to start receiver " + streamId, None)
@@ -175,7 +174,7 @@ private[streaming] abstract class ReceiverSupervisor(
       }
     } catch {
       case NonFatal(t) =>
-        logError(s"Error stopping receiver $streamId ${Utils.exceptionString(t)}")
+        logError("Error stopping receiver " + streamId + t.getStackTraceString)
     }
   }
 
@@ -219,9 +218,11 @@ private[streaming] abstract class ReceiverSupervisor(
     stopLatch.await()
     if (stoppingError != null) {
       logError("Stopped receiver with error: " + stoppingError)
-      throw stoppingError
     } else {
       logInfo("Stopped receiver without error")
+    }
+    if (stoppingError != null) {
+      throw stoppingError
     }
   }
 }

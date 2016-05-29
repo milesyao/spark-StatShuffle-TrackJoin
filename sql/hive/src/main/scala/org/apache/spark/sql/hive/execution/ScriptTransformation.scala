@@ -18,7 +18,6 @@
 package org.apache.spark.sql.hive.execution
 
 import java.io._
-import java.nio.charset.StandardCharsets
 import java.util.Properties
 import javax.annotation.Nullable
 
@@ -32,17 +31,16 @@ import org.apache.hadoop.hive.serde2.AbstractSerDe
 import org.apache.hadoop.hive.serde2.objectinspector._
 import org.apache.hadoop.io.Writable
 
-import org.apache.spark.TaskContext
-import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.ScriptInputOutputSchema
+import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.hive.HiveInspectors
 import org.apache.spark.sql.hive.HiveShim._
+import org.apache.spark.sql.hive.{HiveContext, HiveInspectors}
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.util.{CircularBuffer, RedirectThread, SerializableConfiguration, Utils}
+import org.apache.spark.{Logging, TaskContext}
 
 /**
  * Transforms the input by forking and running the specified script.
@@ -57,14 +55,15 @@ case class ScriptTransformation(
     script: String,
     output: Seq[Attribute],
     child: SparkPlan,
-    ioschema: HiveScriptIOSchema)
-  extends UnaryExecNode {
+    ioschema: HiveScriptIOSchema)(@transient private val sc: HiveContext)
+  extends UnaryNode {
 
-  override def producedAttributes: AttributeSet = outputSet -- inputSet
+  override protected def otherCopyArgs: Seq[HiveContext] = sc :: Nil
+
+  private val serializedHiveConf = new SerializableConfiguration(sc.hiveconf)
 
   protected override def doExecute(): RDD[InternalRow] = {
-    def processIterator(inputIterator: Iterator[InternalRow], hadoopConf: Configuration)
-      : Iterator[InternalRow] = {
+    def processIterator(inputIterator: Iterator[InternalRow]): Iterator[InternalRow] = {
       val cmd = List("/bin/bash", "-c", script)
       val builder = new ProcessBuilder(cmd.asJava)
 
@@ -72,6 +71,7 @@ case class ScriptTransformation(
       val inputStream = proc.getInputStream
       val outputStream = proc.getOutputStream
       val errorStream = proc.getErrorStream
+      val localHiveConf = serializedHiveConf.value
 
       // In order to avoid deadlocks, we need to consume the error output of the child process.
       // To avoid issues caused by large error output, we use a circular buffer to limit the amount
@@ -102,7 +102,7 @@ case class ScriptTransformation(
         proc,
         stderrBuffer,
         TaskContext.get(),
-        hadoopConf
+        localHiveConf
       )
 
       // This nullability is a performance optimization in order to avoid an Option.foreach() call
@@ -111,13 +111,13 @@ case class ScriptTransformation(
         ioschema.initOutputSerDe(output).getOrElse((null, null))
       }
 
-      val reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))
+      val reader = new BufferedReader(new InputStreamReader(inputStream))
       val outputIterator: Iterator[InternalRow] = new Iterator[InternalRow] with HiveInspectors {
         var curLine: String = null
         val scriptOutputStream = new DataInputStream(inputStream)
 
         @Nullable val scriptOutputReader =
-          ioschema.recordReader(scriptOutputStream, hadoopConf).orNull
+          ioschema.recordReader(scriptOutputStream, localHiveConf).orNull
 
         var scriptOutputWritable: Writable = null
         val reusedWritableObject: Writable = if (null != outputSerde) {
@@ -209,13 +209,9 @@ case class ScriptTransformation(
       outputIterator
     }
 
-    val broadcastedHadoopConf =
-      new SerializableConfiguration(sqlContext.sessionState.newHadoopConf())
-
     child.execute().mapPartitions { iter =>
       if (iter.hasNext) {
-        val proj = UnsafeProjection.create(schema)
-        processIterator(iter, broadcastedHadoopConf.value).map(proj)
+        processIterator(iter)
       } else {
         // If the input iterator has no rows then do not launch the external script.
         Iterator.empty
@@ -272,7 +268,7 @@ private class ScriptTransformationWriterThread(
             sb.append(ioschema.inputRowFormatMap("TOK_TABLEROWFORMATLINES"))
             sb.toString()
           }
-          outputStream.write(data.getBytes(StandardCharsets.UTF_8))
+          outputStream.write(data.getBytes("utf-8"))
         } else {
           val writable = inputSerde.serialize(
             row.asInstanceOf[GenericInternalRow].values, inputSoi)
@@ -310,22 +306,6 @@ private class ScriptTransformationWriterThread(
   }
 }
 
-private[hive]
-object HiveScriptIOSchema {
-  def apply(input: ScriptInputOutputSchema): HiveScriptIOSchema = {
-    HiveScriptIOSchema(
-      input.inputRowFormat,
-      input.outputRowFormat,
-      input.inputSerdeClass,
-      input.outputSerdeClass,
-      input.inputSerdeProps,
-      input.outputSerdeProps,
-      input.recordReaderClass,
-      input.recordWriterClass,
-      input.schemaLess)
-  }
-}
-
 /**
  * The wrapper class of Hive input and output schema properties
  */
@@ -339,8 +319,7 @@ case class HiveScriptIOSchema (
     outputSerdeProps: Seq[(String, String)],
     recordReaderClass: Option[String],
     recordWriterClass: Option[String],
-    schemaLess: Boolean)
-  extends HiveInspectors {
+    schemaLess: Boolean) extends ScriptInputOutputSchema with HiveInspectors {
 
   private val defaultFormat = Map(
     ("TOK_TABLEROWFORMATFIELD", "\t"),

@@ -91,28 +91,25 @@ object Cast {
   private def resolvableNullability(from: Boolean, to: Boolean) = !from || to
 
   private def forceNullable(from: DataType, to: DataType) = (from, to) match {
-    case (NullType, _) => true
-    case (_, _) if from == to => false
-
-    case (StringType, BinaryType) => false
-    case (StringType, _) => true
-    case (_, StringType) => false
-
-    case (FloatType | DoubleType, TimestampType) => true
-    case (TimestampType, DateType) => false
-    case (_, DateType) => true
-    case (DateType, TimestampType) => false
-    case (DateType, _) => true
-    case (_, CalendarIntervalType) => true
-
-    case (_, _: DecimalType) => true  // overflow
-    case (_: FractionalType, _: IntegralType) => true  // NaN, infinity
+    case (StringType, _: NumericType) => true
+    case (StringType, TimestampType) => true
+    case (DoubleType, TimestampType) => true
+    case (FloatType, TimestampType) => true
+    case (StringType, DateType) => true
+    case (_: NumericType, DateType) => true
+    case (BooleanType, DateType) => true
+    case (DateType, _: NumericType) => true
+    case (DateType, BooleanType) => true
+    case (DoubleType, _: DecimalType) => true
+    case (FloatType, _: DecimalType) => true
+    case (_, DecimalType.Fixed(_, _)) => true // TODO: not all upcasts here can really give null
     case _ => false
   }
 }
 
 /** Cast the child expression to the target data type. */
-case class Cast(child: Expression, dataType: DataType) extends UnaryExpression with NullIntolerant {
+case class Cast(child: Expression, dataType: DataType)
+  extends UnaryExpression with CodegenFallback {
 
   override def toString: String = s"cast($child as ${dataType.simpleString})"
 
@@ -446,11 +443,11 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
 
   protected override def nullSafeEval(input: Any): Any = cast(input)
 
-  override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
-    val eval = child.genCode(ctx)
+  override def genCode(ctx: CodeGenContext, ev: GeneratedExpressionCode): String = {
+    val eval = child.gen(ctx)
     val nullSafeCast = nullSafeCastFunction(child.dataType, dataType, ctx)
-    ev.copy(code = eval.code +
-      castCode(ctx, eval.value, eval.isNull, ev.value, ev.isNull, dataType, nullSafeCast))
+    eval.code +
+      castCode(ctx, eval.value, eval.isNull, ev.value, ev.isNull, dataType, nullSafeCast)
   }
 
   // three function arguments are: child.primitive, result.primitive and result.isNull
@@ -460,7 +457,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
   private[this] def nullSafeCastFunction(
       from: DataType,
       to: DataType,
-      ctx: CodegenContext): CastFunction = to match {
+      ctx: CodeGenContext): CastFunction = to match {
 
     case _ if from == NullType => (c, evPrim, evNull) => s"$evNull = true;"
     case _ if to == from => (c, evPrim, evNull) => s"$evPrim = $c;"
@@ -491,7 +488,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
 
   // Since we need to cast child expressions recursively inside ComplexTypes, such as Map's
   // Key and Value, Struct's field, we need to name out all the variable names involved in a cast.
-  private[this] def castCode(ctx: CodegenContext, childPrim: String, childNull: String,
+  private[this] def castCode(ctx: CodeGenContext, childPrim: String, childNull: String,
     resultPrim: String, resultNull: String, resultType: DataType, cast: CastFunction): String = {
     s"""
       boolean $resultNull = $childNull;
@@ -502,7 +499,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
     """
   }
 
-  private[this] def castToStringCode(from: DataType, ctx: CodegenContext): CastFunction = {
+  private[this] def castToStringCode(from: DataType, ctx: CodeGenContext): CastFunction = {
     from match {
       case BinaryType =>
         (c, evPrim, evNull) => s"$evPrim = UTF8String.fromBytes($c);"
@@ -524,7 +521,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
 
   private[this] def castToDateCode(
       from: DataType,
-      ctx: CodegenContext): CastFunction = from match {
+      ctx: CodeGenContext): CastFunction = from match {
     case StringType =>
       val intOpt = ctx.freshName("intOpt")
       (c, evPrim, evNull) => s"""
@@ -556,7 +553,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
   private[this] def castToDecimalCode(
       from: DataType,
       target: DecimalType,
-      ctx: CodegenContext): CastFunction = {
+      ctx: CodeGenContext): CastFunction = {
     val tmp = ctx.freshName("tmpDecimal")
     from match {
       case StringType =>
@@ -614,7 +611,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
 
   private[this] def castToTimestampCode(
       from: DataType,
-      ctx: CodegenContext): CastFunction = from match {
+      ctx: CodeGenContext): CastFunction = from match {
     case StringType =>
       val longOpt = ctx.freshName("longOpt")
       (c, evPrim, evNull) =>
@@ -826,7 +823,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
   }
 
   private[this] def castArrayCode(
-      fromType: DataType, toType: DataType, ctx: CodegenContext): CastFunction = {
+      fromType: DataType, toType: DataType, ctx: CodeGenContext): CastFunction = {
     val elementCast = nullSafeCastFunction(fromType, toType, ctx)
     val arrayClass = classOf[GenericArrayData].getName
     val fromElementNull = ctx.freshName("feNull")
@@ -861,7 +858,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
       """
   }
 
-  private[this] def castMapCode(from: MapType, to: MapType, ctx: CodegenContext): CastFunction = {
+  private[this] def castMapCode(from: MapType, to: MapType, ctx: CodeGenContext): CastFunction = {
     val keysCast = castArrayCode(from.keyType, to.keyType, ctx)
     val valuesCast = castArrayCode(from.valueType, to.valueType, ctx)
 
@@ -889,7 +886,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
   }
 
   private[this] def castStructCode(
-      from: StructType, to: StructType, ctx: CodegenContext): CastFunction = {
+      from: StructType, to: StructType, ctx: CodeGenContext): CastFunction = {
 
     val fieldsCasts = from.fields.zip(to.fields).map {
       case (fromField, toField) => nullSafeCastFunction(fromField.dataType, toField.dataType, ctx)
@@ -898,7 +895,7 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
     val result = ctx.freshName("result")
     val tmpRow = ctx.freshName("tmpRow")
 
-    val fieldsEvalCode = fieldsCasts.zipWithIndex.map { case (cast, i) =>
+    val fieldsEvalCode = fieldsCasts.zipWithIndex.map { case (cast, i) => {
       val fromFieldPrim = ctx.freshName("ffp")
       val fromFieldNull = ctx.freshName("ffn")
       val toFieldPrim = ctx.freshName("tfp")
@@ -920,23 +917,16 @@ case class Cast(child: Expression, dataType: DataType) extends UnaryExpression w
           }
         }
        """
+      }
     }.mkString("\n")
 
     (c, evPrim, evNull) =>
       s"""
-        final $rowClass $result = new $rowClass(${fieldsCasts.length});
+        final $rowClass $result = new $rowClass(${fieldsCasts.size});
         final InternalRow $tmpRow = $c;
         $fieldsEvalCode
         $evPrim = $result.copy();
       """
-  }
-
-  override def sql: String = dataType match {
-    // HiveQL doesn't allow casting to complex types. For logical plans translated from HiveQL, this
-    // type of casting can only be introduced by the analyzer, and can be omitted when converting
-    // back to SQL query string.
-    case _: ArrayType | _: MapType | _: StructType => child.sql
-    case _ => s"CAST(${child.sql} AS ${dataType.sql})"
   }
 }
 

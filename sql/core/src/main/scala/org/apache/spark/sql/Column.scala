@@ -17,19 +17,19 @@
 
 package org.apache.spark.sql
 
+import org.apache.spark.sql.execution.aggregate.TypedAggregateExpression
+
 import scala.language.implicitConversions
 
 import org.apache.spark.annotation.Experimental
-import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.encoders.{encoderFor, ExpressionEncoder}
-import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
-import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
-import org.apache.spark.sql.catalyst.util.usePrettyExpression
-import org.apache.spark.sql.execution.aggregate.TypedAggregateExpression
+import org.apache.spark.Logging
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.catalyst.analysis._
+import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, encoderFor}
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.util.DataTypeParser
 import org.apache.spark.sql.types._
+
 
 private[sql] object Column {
 
@@ -38,14 +38,6 @@ private[sql] object Column {
   def apply(expr: Expression): Column = new Column(expr)
 
   def unapply(col: Column): Option[Expression] = Some(col.expr)
-
-  private[sql] def generateAlias(e: Expression): String = {
-    e match {
-      case a: AggregateExpression if a.aggregateFunction.isInstanceOf[TypedAggregateExpression] =>
-        a.aggregateFunction.toString
-      case expr => usePrettyExpression(expr).sql
-    }
-  }
 }
 
 /**
@@ -68,27 +60,15 @@ class TypedColumn[-T, U](
    * on a decoded object.
    */
   private[sql] def withInputType(
-      inputDeserializer: Expression,
-      inputAttributes: Seq[Attribute]): TypedColumn[T, U] = {
-    val unresolvedDeserializer = UnresolvedDeserializer(inputDeserializer, inputAttributes)
-    val newExpr = expr transform {
-      case ta: TypedAggregateExpression if ta.inputDeserializer.isEmpty =>
-        ta.copy(inputDeserializer = Some(unresolvedDeserializer))
-    }
-    new TypedColumn[T, U](newExpr, encoder)
+      inputEncoder: ExpressionEncoder[_],
+      schema: Seq[Attribute]): TypedColumn[T, U] = {
+    val boundEncoder = inputEncoder.bind(schema).asInstanceOf[ExpressionEncoder[Any]]
+    new TypedColumn[T, U](
+      expr transform { case ta: TypedAggregateExpression if ta.aEncoder.isEmpty =>
+        ta.copy(aEncoder = Some(boundEncoder), children = schema)
+      },
+      encoder)
   }
-
-  /**
-   * Gives the TypedColumn a name (alias).
-   * If the current TypedColumn has metadata associated with it, this metadata will be propagated
-   * to the new column.
-   *
-   * @group expr_ops
-   * @since 2.0.0
-   */
-  override def name(alias: String): TypedColumn[T, U] =
-    new TypedColumn[T, U](super.name(alias).expr, encoder)
-
 }
 
 /**
@@ -99,7 +79,7 @@ class TypedColumn[-T, U](
  *
  * {{{
  *   df("columnName")            // On a specific DataFrame.
- *   col("columnName")           // A generic column no yet associated with a DataFrame.
+ *   col("columnName")           // A generic column no yet associcated with a DataFrame.
  *   col("columnName.field")     // Extracting a struct field
  *   col("`a.column.with.dots`") // Escape `.` in column names.
  *   $"columnName"               // Scala short hand for a named column.
@@ -126,9 +106,10 @@ class Column(protected[sql] val expr: Expression) extends Logging {
 
   def this(name: String) = this(name match {
     case "*" => UnresolvedStar(None)
-    case _ if name.endsWith(".*") =>
+    case _ if name.endsWith(".*") => {
       val parts = UnresolvedAttribute.parseAttributeName(name.substring(0, name.length - 2))
       UnresolvedStar(Some(parts))
+    }
     case _ => UnresolvedAttribute.quotedString(name)
   })
 
@@ -144,17 +125,12 @@ class Column(protected[sql] val expr: Expression) extends Logging {
     // make it a NamedExpression.
     case u: UnresolvedAttribute => UnresolvedAlias(u)
 
-    case u: UnresolvedExtractValue => UnresolvedAlias(u)
-
     case expr: NamedExpression => expr
 
     // Leave an unaliased generator with an empty list of names since the analyzer will generate
     // the correct defaults after the nested expression's type has been resolved.
     case explode: Explode => MultiAlias(explode, Nil)
-
     case jt: JsonTuple => MultiAlias(jt, Nil)
-
-    case func: UnresolvedFunction => UnresolvedAlias(func, Some(Column.generateAlias))
 
     // If we have a top level Cast, there is a chance to give it a better alias, if there is a
     // NamedExpression under this Cast.
@@ -162,18 +138,13 @@ class Column(protected[sql] val expr: Expression) extends Logging {
       case Cast(ne: NamedExpression, to) => UnresolvedAlias(Cast(ne, to))
     } match {
       case ne: NamedExpression => ne
-      case other => Alias(expr, usePrettyExpression(expr).sql)()
+      case other => Alias(expr, expr.prettyString)()
     }
 
-    case a: AggregateExpression if a.aggregateFunction.isInstanceOf[TypedAggregateExpression] =>
-      UnresolvedAlias(a, Some(Column.generateAlias))
-
-    case expr: Expression => Alias(expr, usePrettyExpression(expr).sql)()
+    case expr: Expression => Alias(expr, expr.prettyString)()
   }
 
-
-
-  override def toString: String = usePrettyExpression(expr).sql
+  override def toString: String = expr.prettyString
 
   override def equals(that: Any): Boolean = that match {
     case that: Column => that.expr.equals(this.expr)
@@ -283,23 +254,6 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    * Inequality test.
    * {{{
    *   // Scala:
-   *   df.select( df("colA") =!= df("colB") )
-   *   df.select( !(df("colA") === df("colB")) )
-   *
-   *   // Java:
-   *   import static org.apache.spark.sql.functions.*;
-   *   df.filter( col("colA").notEqual(col("colB")) );
-   * }}}
-   *
-   * @group expr_ops
-   * @since 2.0.0
-    */
-  def =!= (other: Any): Column = withExpr{ Not(EqualTo(expr, lit(other).expr)) }
-
-  /**
-   * Inequality test.
-   * {{{
-   *   // Scala:
    *   df.select( df("colA") !== df("colB") )
    *   df.select( !(df("colA") === df("colB")) )
    *
@@ -310,9 +264,8 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    *
    * @group expr_ops
    * @since 1.3.0
-    */
-  @deprecated("!== does not have the same precedence as ===, use =!= instead", "2.0.0")
-  def !== (other: Any): Column = this =!= other
+   */
+  def !== (other: Any): Column = withExpr{ Not(EqualTo(expr, lit(other).expr)) }
 
   /**
    * Inequality test.
@@ -491,11 +444,8 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    * @since 1.4.0
    */
   def when(condition: Column, value: Any): Column = this.expr match {
-    case CaseWhen(branches, None) =>
-      withExpr { CaseWhen(branches :+ (condition.expr, lit(value).expr)) }
-    case CaseWhen(branches, Some(_)) =>
-      throw new IllegalArgumentException(
-        "when() cannot be applied once otherwise() is applied")
+    case CaseWhen(branches: Seq[Expression]) =>
+      withExpr { CaseWhen(branches ++ Seq(lit(condition).expr, lit(value).expr)) }
     case _ =>
       throw new IllegalArgumentException(
         "when() can only be applied on a Column previously generated by when() function")
@@ -523,11 +473,13 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    * @since 1.4.0
    */
   def otherwise(value: Any): Column = this.expr match {
-    case CaseWhen(branches, None) =>
-      withExpr { CaseWhen(branches, Option(lit(value).expr)) }
-    case CaseWhen(branches, Some(_)) =>
-      throw new IllegalArgumentException(
-        "otherwise() can only be applied once on a Column previously generated by when()")
+    case CaseWhen(branches: Seq[Expression]) =>
+      if (branches.size % 2 == 0) {
+        withExpr { CaseWhen(branches :+ lit(value).expr) }
+      } else {
+        throw new IllegalArgumentException(
+          "otherwise() can only be applied once on a Column previously generated by when()")
+      }
     case _ =>
       throw new IllegalArgumentException(
         "otherwise() can only be applied on a Column previously generated by when()")
@@ -768,6 +720,18 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    * by the evaluated values of the arguments.
    *
    * @group expr_ops
+   * @since 1.3.0
+   * @deprecated As of 1.5.0. Use isin. This will be removed in Spark 2.0.
+   */
+  @deprecated("use isin. This will be removed in Spark 2.0.", "1.5.0")
+  @scala.annotation.varargs
+  def in(list: Any*): Column = isin(list : _*)
+
+  /**
+   * A boolean expression that is evaluated to true if the value of this expression is contained
+   * by the evaluated values of the arguments.
+   *
+   * @group expr_ops
    * @since 1.5.0
    */
   @scala.annotation.varargs
@@ -882,7 +846,7 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    * @group expr_ops
    * @since 1.4.0
    */
-  def alias(alias: String): Column = name(alias)
+  def alias(alias: String): Column = as(alias)
 
   /**
    * Gives the column an alias.
@@ -897,7 +861,12 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    * @group expr_ops
    * @since 1.3.0
    */
-  def as(alias: String): Column = name(alias)
+  def as(alias: String): Column = withExpr {
+    expr match {
+      case ne: NamedExpression => Alias(expr, alias)(explicitMetadata = Some(ne.metadata))
+      case other => Alias(other, alias)()
+    }
+  }
 
   /**
    * (Scala-specific) Assigns the given aliases to the results of a table generating function.
@@ -936,7 +905,12 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    * @group expr_ops
    * @since 1.3.0
    */
-  def as(alias: Symbol): Column = name(alias.name)
+  def as(alias: Symbol): Column = withExpr {
+    expr match {
+      case ne: NamedExpression => Alias(expr, alias.name)(explicitMetadata = Some(ne.metadata))
+      case other => Alias(other, alias.name)()
+    }
+  }
 
   /**
    * Gives the column an alias with metadata.
@@ -950,26 +924,6 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    */
   def as(alias: String, metadata: Metadata): Column = withExpr {
     Alias(expr, alias)(explicitMetadata = Some(metadata))
-  }
-
-  /**
-   * Gives the column a name (alias).
-   * {{{
-   *   // Renames colA to colB in select output.
-   *   df.select($"colA".name("colB"))
-   * }}}
-   *
-   * If the current column has metadata associated with it, this metadata will be propagated
-   * to the new column.  If this not desired, use `as` with explicitly empty metadata.
-   *
-   * @group expr_ops
-   * @since 2.0.0
-   */
-  def name(alias: String): Column = withExpr {
-    expr match {
-      case ne: NamedExpression => Alias(expr, alias)(explicitMetadata = Some(ne.metadata))
-      case other => Alias(other, alias)()
-    }
   }
 
   /**
@@ -1000,7 +954,7 @@ class Column(protected[sql] val expr: Expression) extends Logging {
    * @group expr_ops
    * @since 1.3.0
    */
-  def cast(to: String): Column = cast(CatalystSqlParser.parseDataType(to))
+  def cast(to: String): Column = cast(DataTypeParser.parse(to))
 
   /**
    * Returns an ordering used in sorting.
@@ -1043,7 +997,7 @@ class Column(protected[sql] val expr: Expression) extends Logging {
     if (extended) {
       println(expr)
     } else {
-      println(expr.sql)
+      println(expr.prettyString)
     }
     // scalastyle:on println
   }

@@ -21,10 +21,11 @@ import scala.language.higherKinds
 import scala.language.implicitConversions
 import scala.reflect.ClassTag
 
+import org.apache.spark.Logging
+import org.apache.spark.util.collection.BitSet
+
 import org.apache.spark.graphx._
 import org.apache.spark.graphx.util.collection.GraphXPrimitiveKeyOpenHashMap
-import org.apache.spark.internal.Logging
-import org.apache.spark.util.collection.BitSet
 
 /**
  * An class containing additional operations for subclasses of VertexPartitionBase that provide
@@ -32,7 +33,7 @@ import org.apache.spark.util.collection.BitSet
  * example, [[VertexPartition.VertexPartitionOpsConstructor]]).
  */
 private[graphx] abstract class VertexPartitionBaseOps
-    [VD: ClassTag, Self[X] <: VertexPartitionBase[X]: VertexPartitionBaseOpsConstructor]
+    [VD: ClassTag, Self[X] <: VertexPartitionBase[X] : VertexPartitionBaseOpsConstructor]
     (self: Self[VD])
   extends Serializable with Logging {
 

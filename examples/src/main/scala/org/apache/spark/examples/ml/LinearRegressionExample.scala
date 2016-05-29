@@ -18,13 +18,16 @@
 // scalastyle:off println
 package org.apache.spark.examples.ml
 
+import scala.collection.mutable
 import scala.language.reflectiveCalls
 
 import scopt.OptionParser
 
+import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.examples.mllib.AbstractParams
-import org.apache.spark.ml.regression.LinearRegression
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.ml.{Pipeline, PipelineStage}
+import org.apache.spark.ml.regression.{LinearRegression, LinearRegressionModel}
+import org.apache.spark.sql.DataFrame
 
 /**
  * An example runner for linear regression with elastic-net (mixing L1/L2) regularization.
@@ -73,11 +76,11 @@ object LinearRegressionExample {
         s"to higher accuracy with the cost of more iterations, default: ${defaultParams.tol}")
         .action((x, c) => c.copy(tol = x))
       opt[Double]("fracTest")
-        .text(s"fraction of data to hold out for testing. If given option testInput, " +
+        .text(s"fraction of data to hold out for testing.  If given option testInput, " +
         s"this option is ignored. default: ${defaultParams.fracTest}")
         .action((x, c) => c.copy(fracTest = x))
       opt[String]("testInput")
-        .text(s"input path to test dataset. If given, option fracTest is ignored." +
+        .text(s"input path to test dataset.  If given, option fracTest is ignored." +
         s" default: ${defaultParams.testInput}")
         .action((x, c) => c.copy(testInput = x))
       opt[String]("dataFormat")
@@ -104,15 +107,13 @@ object LinearRegressionExample {
   }
 
   def run(params: Params) {
-    val spark = SparkSession
-      .builder
-      .appName(s"LinearRegressionExample with $params")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName(s"LinearRegressionExample with $params")
+    val sc = new SparkContext(conf)
 
     println(s"LinearRegressionExample with parameters:\n$params")
 
     // Load training and test data and cache it.
-    val (training: DataFrame, test: DataFrame) = DecisionTreeExample.loadDatasets(params.input,
+    val (training: DataFrame, test: DataFrame) = DecisionTreeExample.loadDatasets(sc, params.input,
       params.dataFormat, params.testInput, "regression", params.fracTest)
 
     val lir = new LinearRegression()
@@ -137,7 +138,7 @@ object LinearRegressionExample {
     println("Test data results:")
     DecisionTreeExample.evaluateRegressionModel(lirModel, test, "label")
 
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

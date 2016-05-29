@@ -17,18 +17,16 @@
 
 package org.apache.spark.sql.execution
 
-import java.util.Properties
-
-import scala.collection.mutable
-import scala.util.{Random, Try}
 import scala.util.control.NonFatal
+import scala.collection.mutable
+import scala.util.{Try, Random}
 
 import org.scalatest.Matchers
 
-import org.apache.spark.{SparkConf, SparkFunSuite, TaskContext, TaskContextImpl}
+import org.apache.spark.{SparkConf, TaskContextImpl, TaskContext, SparkFunSuite}
 import org.apache.spark.memory.{TaskMemoryManager, TestMemoryManager}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.UnsafeRow
+import org.apache.spark.sql.catalyst.expressions.{UnsafeRow, UnsafeProjection}
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -73,8 +71,8 @@ class UnsafeFixedWidthAggregationMapSuite
         taskAttemptId = Random.nextInt(10000),
         attemptNumber = 0,
         taskMemoryManager = taskMemoryManager,
-        localProperties = new Properties,
-        metricsSystem = null))
+        metricsSystem = null,
+        internalAccumulators = Seq.empty))
 
       try {
         f

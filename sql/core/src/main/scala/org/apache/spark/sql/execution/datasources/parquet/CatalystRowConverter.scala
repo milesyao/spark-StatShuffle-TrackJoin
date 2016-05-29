@@ -25,15 +25,14 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.parquet.column.Dictionary
 import org.apache.parquet.io.api.{Binary, Converter, GroupConverter, PrimitiveConverter}
-import org.apache.parquet.schema.{GroupType, MessageType, PrimitiveType, Type}
 import org.apache.parquet.schema.OriginalType.{INT_32, LIST, UTF8}
-import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.{BINARY, DOUBLE, FIXED_LEN_BYTE_ARRAY, INT32, INT64}
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.{DOUBLE, INT32, INT64, BINARY, FIXED_LEN_BYTE_ARRAY}
+import org.apache.parquet.schema.{GroupType, MessageType, PrimitiveType, Type}
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.util.{ArrayBasedMapData, DateTimeUtils, GenericArrayData}
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.SQLTimestamp
+import org.apache.spark.sql.catalyst.util.{GenericArrayData, ArrayBasedMapData, DateTimeUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -328,8 +327,8 @@ private[parquet] class CatalystRowConverter(
       // are using `Binary.toByteBuffer.array()` to steal the underlying byte array without copying
       // it.
       val buffer = value.toByteBuffer
-      val offset = buffer.arrayOffset() + buffer.position()
-      val numBytes = buffer.remaining()
+      val offset = buffer.position()
+      val numBytes = buffer.limit() - buffer.position()
       updater.set(UTF8String.fromBytes(buffer.array(), offset, numBytes))
     }
   }
@@ -369,7 +368,7 @@ private[parquet] class CatalystRowConverter(
     }
 
     protected def decimalFromBinary(value: Binary): Decimal = {
-      if (precision <= Decimal.MAX_LONG_DIGITS) {
+      if (precision <= CatalystSchemaConverter.MAX_PRECISION_FOR_INT64) {
         // Constructs a `Decimal` with an unscaled `Long` value if possible.
         val unscaled = CatalystRowConverter.binaryToUnscaledLong(value)
         Decimal(unscaled, precision, scale)
@@ -645,8 +644,8 @@ private[parquet] object CatalystRowConverter {
     // copying it.
     val buffer = binary.toByteBuffer
     val bytes = buffer.array()
-    val start = buffer.arrayOffset() + buffer.position()
-    val end = buffer.arrayOffset() + buffer.limit()
+    val start = buffer.position()
+    val end = buffer.limit()
 
     var unscaled = 0L
     var i = start
@@ -659,14 +658,5 @@ private[parquet] object CatalystRowConverter {
     val bits = 8 * (end - start)
     unscaled = (unscaled << (64 - bits)) >> (64 - bits)
     unscaled
-  }
-
-  def binaryToSQLTimestamp(binary: Binary): SQLTimestamp = {
-    assert(binary.length() == 12, s"Timestamps (with nanoseconds) are expected to be stored in" +
-      s" 12-byte long binaries. Found a ${binary.length()}-byte binary instead.")
-    val buffer = binary.toByteBuffer.order(ByteOrder.LITTLE_ENDIAN)
-    val timeOfDayNanos = buffer.getLong
-    val julianDay = buffer.getInt
-    DateTimeUtils.fromJulianDay(julianDay, timeOfDayNanos)
   }
 }

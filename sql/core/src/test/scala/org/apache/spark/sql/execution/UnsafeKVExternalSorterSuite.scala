@@ -17,15 +17,13 @@
 
 package org.apache.spark.sql.execution
 
-import java.util.Properties
-
 import scala.util.Random
 
 import org.apache.spark._
 import org.apache.spark.memory.{TaskMemoryManager, TestMemoryManager}
 import org.apache.spark.sql.{RandomDataGenerator, Row}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
-import org.apache.spark.sql.catalyst.expressions.{InterpretedOrdering, UnsafeProjection, UnsafeRow}
+import org.apache.spark.sql.catalyst.expressions.{InterpretedOrdering, UnsafeRow, UnsafeProjection}
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.sql.types._
 
@@ -42,8 +40,8 @@ class UnsafeKVExternalSorterSuite extends SparkFunSuite with SharedSQLContext {
 
   private val rand = new Random(42)
   for (i <- 0 until 6) {
-    val keySchema = RandomDataGenerator.randomSchema(rand, rand.nextInt(10) + 1, keyTypes)
-    val valueSchema = RandomDataGenerator.randomSchema(rand, rand.nextInt(10) + 1, valueTypes)
+    val keySchema = RandomDataGenerator.randomSchema(rand.nextInt(10) + 1, keyTypes)
+    val valueSchema = RandomDataGenerator.randomSchema(rand.nextInt(10) + 1, valueTypes)
     testKVSorter(keySchema, valueSchema, spill = i > 3)
   }
 
@@ -119,11 +117,11 @@ class UnsafeKVExternalSorterSuite extends SparkFunSuite with SharedSQLContext {
       taskAttemptId = 98456,
       attemptNumber = 0,
       taskMemoryManager = taskMemMgr,
-      localProperties = new Properties,
-      metricsSystem = null))
+      metricsSystem = null,
+      internalAccumulators = Seq.empty))
 
     val sorter = new UnsafeKVExternalSorter(
-      keySchema, valueSchema, SparkEnv.get.blockManager, SparkEnv.get.serializerManager, pageSize)
+      keySchema, valueSchema, SparkEnv.get.blockManager, pageSize)
 
     // Insert the keys and values into the sorter
     inputData.foreach { case (k, v) =>

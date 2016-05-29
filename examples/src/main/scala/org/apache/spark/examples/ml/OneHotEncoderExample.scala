@@ -21,17 +21,17 @@ package org.apache.spark.examples.ml
 // $example on$
 import org.apache.spark.ml.feature.{OneHotEncoder, StringIndexer}
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object OneHotEncoderExample {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("OneHotEncoderExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("OneHotEncoderExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val df = spark.createDataFrame(Seq(
+    val df = sqlContext.createDataFrame(Seq(
       (0, "a"),
       (1, "b"),
       (2, "c"),
@@ -52,8 +52,7 @@ object OneHotEncoderExample {
     val encoded = encoder.transform(indexed)
     encoded.select("id", "categoryVec").show()
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

@@ -17,9 +17,10 @@
 
 package org.apache.spark.sql.catalyst.expressions.codegen
 
-import org.apache.spark.sql.catalyst.expressions.{Attribute, UnsafeRow}
+import org.apache.spark.sql.catalyst.expressions.{UnsafeRow, Attribute}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.Platform
+
 
 abstract class UnsafeRowJoiner {
   def join(row1: UnsafeRow, row2: UnsafeRow): UnsafeRow
@@ -157,14 +158,14 @@ object GenerateUnsafeRowJoiner extends CodeGenerator[(StructType, StructType), U
     }.mkString("\n")
 
     // ------------------------ Finally, put everything together  --------------------------- //
-    val codeBody = s"""
-       |public java.lang.Object generate(Object[] references) {
+    val code = s"""
+       |public java.lang.Object generate($exprType[] exprs) {
        |  return new SpecificUnsafeRowJoiner();
        |}
        |
        |class SpecificUnsafeRowJoiner extends ${classOf[UnsafeRowJoiner].getName} {
        |  private byte[] buf = new byte[64];
-       |  private UnsafeRow out = new UnsafeRow(${schema1.size + schema2.size});
+       |  private UnsafeRow out = new UnsafeRow();
        |
        |  public UnsafeRow join(UnsafeRow row1, UnsafeRow row2) {
        |    // row1: ${schema1.size} fields, $bitset1Words words in bitset
@@ -187,16 +188,16 @@ object GenerateUnsafeRowJoiner extends CodeGenerator[(StructType, StructType), U
        |    $copyVariableLengthRow2
        |    $updateOffset
        |
-       |    out.pointTo(buf, sizeInBytes);
+       |    out.pointTo(buf, ${schema1.size + schema2.size}, sizeInBytes);
        |
        |    return out;
        |  }
        |}
      """.stripMargin
-    val code = CodeFormatter.stripOverlappingComments(new CodeAndComment(codeBody, Map.empty))
+
     logDebug(s"SpecificUnsafeRowJoiner($schema1, $schema2):\n${CodeFormatter.format(code)}")
 
-    val c = CodeGenerator.compile(code)
+    val c = compile(code)
     c.generate(Array.empty).asInstanceOf[UnsafeRowJoiner]
   }
 }

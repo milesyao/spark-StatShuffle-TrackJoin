@@ -21,13 +21,11 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.annotation.{Experimental, Since}
 import org.apache.spark.ml._
-import org.apache.spark.ml.linalg.{Vector, VectorUDT}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.util._
 import org.apache.spark.mllib.feature
-import org.apache.spark.mllib.linalg.{Vector => OldVector, Vectors => OldVectors}
-import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.linalg.{Vector, VectorUDT}
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
@@ -38,12 +36,12 @@ import org.apache.spark.sql.types.StructType
 private[feature] trait IDFBase extends Params with HasInputCol with HasOutputCol {
 
   /**
-   * The minimum number of documents in which a term should appear.
+   * The minimum of documents in which a term should appear.
    * Default: 0
    * @group param
    */
   final val minDocFreq = new IntParam(
-    this, "minDocFreq", "minimum number of documents in which a term should appear for filtering")
+    this, "minDocFreq", "minimum of documents in which a term should appear for filtering")
 
   setDefault(minDocFreq -> 0)
 
@@ -78,12 +76,9 @@ final class IDF(override val uid: String) extends Estimator[IDFModel] with IDFBa
   /** @group setParam */
   def setMinDocFreq(value: Int): this.type = set(minDocFreq, value)
 
-  @Since("2.0.0")
-  override def fit(dataset: Dataset[_]): IDFModel = {
+  override def fit(dataset: DataFrame): IDFModel = {
     transformSchema(dataset.schema, logging = true)
-    val input: RDD[OldVector] = dataset.select($(inputCol)).rdd.map {
-      case Row(v: Vector) => OldVectors.fromML(v)
-    }
+    val input = dataset.select($(inputCol)).map { case Row(v: Vector) => v }
     val idf = new feature.IDF($(minDocFreq)).fit(input)
     copyValues(new IDFModel(uid, idf).setParent(this))
   }
@@ -120,11 +115,9 @@ class IDFModel private[ml] (
   /** @group setParam */
   def setOutputCol(value: String): this.type = set(outputCol, value)
 
-  @Since("2.0.0")
-  override def transform(dataset: Dataset[_]): DataFrame = {
+  override def transform(dataset: DataFrame): DataFrame = {
     transformSchema(dataset.schema, logging = true)
-    // TODO: Make the idfModel.transform natively in ml framework to avoid extra conversion.
-    val idf = udf { vec: Vector => idfModel.transform(OldVectors.fromML(vec)).asML }
+    val idf = udf { vec: Vector => idfModel.transform(vec) }
     dataset.withColumn($(outputCol), idf(col($(inputCol))))
   }
 
@@ -139,7 +132,7 @@ class IDFModel private[ml] (
 
   /** Returns the IDF vector. */
   @Since("1.6.0")
-  def idf: Vector = idfModel.idf.asML
+  def idf: Vector = idfModel.idf
 
   @Since("1.6.0")
   override def write: MLWriter = new IDFModelWriter(this)
@@ -171,7 +164,7 @@ object IDFModel extends MLReadable[IDFModel] {
         .select("idf")
         .head()
       val idf = data.getAs[Vector](0)
-      val model = new IDFModel(metadata.uid, new feature.IDFModel(OldVectors.fromML(idf)))
+      val model = new IDFModel(metadata.uid, new feature.IDFModel(idf))
       DefaultParamsReader.getAndSetParams(model, metadata)
       model
     }

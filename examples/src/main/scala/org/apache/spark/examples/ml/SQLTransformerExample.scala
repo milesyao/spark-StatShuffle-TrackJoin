@@ -21,17 +21,18 @@ package org.apache.spark.examples.ml
 // $example on$
 import org.apache.spark.ml.feature.SQLTransformer
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
+
 
 object SQLTransformerExample {
   def main(args: Array[String]) {
-    val spark = SparkSession
-      .builder
-      .appName("SQLTransformerExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("SQLTransformerExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val df = spark.createDataFrame(
+    val df = sqlContext.createDataFrame(
       Seq((0, 1.0, 3.0), (2, 2.0, 5.0))).toDF("id", "v1", "v2")
 
     val sqlTrans = new SQLTransformer().setStatement(
@@ -39,8 +40,6 @@ object SQLTransformerExample {
 
     sqlTrans.transform(df).show()
     // $example off$
-
-    spark.stop()
   }
 }
 // scalastyle:on println

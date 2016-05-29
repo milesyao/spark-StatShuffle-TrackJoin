@@ -17,17 +17,11 @@
 
 package org.apache.spark.sql.catalyst.expressions.codegen
 
-import scala.annotation.tailrec
-
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.NoOp
-import org.apache.spark.sql.catalyst.util.{ArrayBasedMapData, GenericArrayData}
+import org.apache.spark.sql.catalyst.util.{GenericArrayData, ArrayBasedMapData}
 import org.apache.spark.sql.types._
 
-/**
- * Java can not access Projection (in package object)
- */
-abstract class BaseProjection extends Projection {}
 
 /**
  * Generates byte code that produces a [[MutableRow]] object (not an [[UnsafeRow]]) that can update
@@ -42,13 +36,13 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
     in.map(BindReferences.bindReference(_, inputSchema))
 
   private def createCodeForStruct(
-      ctx: CodegenContext,
+      ctx: CodeGenContext,
       input: String,
-      schema: StructType): ExprCode = {
+      schema: StructType): GeneratedExpressionCode = {
     val tmp = ctx.freshName("tmp")
     val output = ctx.freshName("safeRow")
     val values = ctx.freshName("values")
-    // These expressions could be split into multiple functions
+    // These expressions could be splitted into multiple functions
     ctx.addMutableState("Object[]", values, s"this.$values = null;")
 
     val rowClass = classOf[GenericInternalRow].getName
@@ -68,16 +62,15 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
       this.$values = new Object[${schema.length}];
       $allFields
       final InternalRow $output = new $rowClass($values);
-      this.$values = null;
     """
 
-    ExprCode(code, "false", output)
+    GeneratedExpressionCode(code, "false", output)
   }
 
   private def createCodeForArray(
-      ctx: CodegenContext,
+      ctx: CodeGenContext,
       input: String,
-      elementType: DataType): ExprCode = {
+      elementType: DataType): GeneratedExpressionCode = {
     val tmp = ctx.freshName("tmp")
     val output = ctx.freshName("safeArray")
     val values = ctx.freshName("values")
@@ -99,14 +92,14 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
       final ArrayData $output = new $arrayClass($values);
     """
 
-    ExprCode(code, "false", output)
+    GeneratedExpressionCode(code, "false", output)
   }
 
   private def createCodeForMap(
-      ctx: CodegenContext,
+      ctx: CodeGenContext,
       input: String,
       keyType: DataType,
-      valueType: DataType): ExprCode = {
+      valueType: DataType): GeneratedExpressionCode = {
     val tmp = ctx.freshName("tmp")
     val output = ctx.freshName("safeMap")
     val mapClass = classOf[ArrayBasedMapData].getName
@@ -120,21 +113,20 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
       final MapData $output = new $mapClass(${keyConverter.value}, ${valueConverter.value});
     """
 
-    ExprCode(code, "false", output)
+    GeneratedExpressionCode(code, "false", output)
   }
 
-  @tailrec
   private def convertToSafe(
-      ctx: CodegenContext,
+      ctx: CodeGenContext,
       input: String,
-      dataType: DataType): ExprCode = dataType match {
+      dataType: DataType): GeneratedExpressionCode = dataType match {
     case s: StructType => createCodeForStruct(ctx, input, s)
     case ArrayType(elementType, _) => createCodeForArray(ctx, input, elementType)
     case MapType(keyType, valueType, _) => createCodeForMap(ctx, input, keyType, valueType)
     // UTF8String act as a pointer if it's inside UnsafeRow, so copy it to make it safe.
-    case StringType => ExprCode("", "false", s"$input.clone()")
+    case StringType => GeneratedExpressionCode("", "false", s"$input.clone()")
     case udt: UserDefinedType[_] => convertToSafe(ctx, input, udt.sqlType)
-    case _ => ExprCode("", "false", input)
+    case _ => GeneratedExpressionCode("", "false", input)
   }
 
   protected def create(expressions: Seq[Expression]): Projection = {
@@ -142,7 +134,7 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
     val expressionCodes = expressions.zipWithIndex.map {
       case (NoOp, _) => ""
       case (e, i) =>
-        val evaluationCode = e.genCode(ctx)
+        val evaluationCode = e.gen(ctx)
         val converter = convertToSafe(ctx, evaluationCode.value, e.dataType)
         evaluationCode.code +
           s"""
@@ -155,22 +147,22 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
           """
     }
     val allExpressions = ctx.splitExpressions(ctx.INPUT_ROW, expressionCodes)
-    val codeBody = s"""
-      public java.lang.Object generate(Object[] references) {
-        return new SpecificSafeProjection(references);
+    val code = s"""
+      public java.lang.Object generate($exprType[] expr) {
+        return new SpecificSafeProjection(expr);
       }
 
       class SpecificSafeProjection extends ${classOf[BaseProjection].getName} {
 
-        private Object[] references;
-        private MutableRow mutableRow;
-        ${ctx.declareMutableStates()}
-        ${ctx.declareAddedFunctions()}
+        private $exprType[] expressions;
+        private $mutableRowType mutableRow;
+        ${declareMutableStates(ctx)}
+        ${declareAddedFunctions(ctx)}
 
-        public SpecificSafeProjection(Object[] references) {
-          this.references = references;
-          mutableRow = (MutableRow) references[references.length - 1];
-          ${ctx.initMutableStates()}
+        public SpecificSafeProjection($exprType[] expr) {
+          expressions = expr;
+          mutableRow = new $genericMutableRowType(${expressions.size});
+          ${initMutableStates(ctx)}
         }
 
         public java.lang.Object apply(java.lang.Object _i) {
@@ -181,12 +173,9 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
       }
     """
 
-    val code = CodeFormatter.stripOverlappingComments(
-      new CodeAndComment(codeBody, ctx.getPlaceHolderToComments()))
     logDebug(s"code for ${expressions.mkString(",")}:\n${CodeFormatter.format(code)}")
 
-    val c = CodeGenerator.compile(code)
-    val resultRow = new SpecificMutableRow(expressions.map(_.dataType))
-    c.generate(ctx.references.toArray :+ resultRow).asInstanceOf[Projection]
+    val c = compile(code)
+    c.generate(ctx.references.toArray).asInstanceOf[Projection]
   }
 }

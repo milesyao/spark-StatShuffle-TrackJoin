@@ -18,24 +18,22 @@
 package org.apache.spark.sql.execution.datasources.json
 
 import java.io.ByteArrayOutputStream
-
 import scala.collection.mutable.ArrayBuffer
 
 import com.fasterxml.jackson.core._
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util._
 import org.apache.spark.sql.execution.datasources.json.JacksonUtils.nextUntil
-import org.apache.spark.sql.types._
+import org.apache.spark.sql.types.{ArrayBasedMapData => _, _}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
 private[json] class SparkSQLJsonProcessingException(msg: String) extends RuntimeException(msg)
 
-object JacksonParser extends Logging {
+object JacksonParser {
 
   def parse(
       input: RDD[String],
@@ -50,31 +48,8 @@ object JacksonParser extends Logging {
 
   /**
    * Parse the current token (and related children) according to a desired schema
-   * This is an wrapper for the method `convertField()` to handle a row wrapped
-   * with an array.
    */
-  def convertRootField(
-      factory: JsonFactory,
-      parser: JsonParser,
-      schema: DataType): Any = {
-    import com.fasterxml.jackson.core.JsonToken._
-    (parser.getCurrentToken, schema) match {
-      case (START_ARRAY, st: StructType) =>
-        // SPARK-3308: support reading top level JSON arrays and take every element
-        // in such an array as a row
-        convertArray(factory, parser, st)
-
-      case (START_OBJECT, ArrayType(st, _)) =>
-        // the business end of SPARK-3308:
-        // when an object is found but an array is requested just wrap it in a list
-        convertField(factory, parser, st) :: Nil
-
-      case _ =>
-        convertField(factory, parser, schema)
-    }
-  }
-
-  private def convertField(
+  def convertField(
       factory: JsonFactory,
       parser: JsonParser,
       schema: DataType): Any = {
@@ -114,7 +89,7 @@ object JacksonParser extends Logging {
         DateTimeUtils.stringToTime(parser.getText).getTime * 1000L
 
       case (VALUE_NUMBER_INT, TimestampType) =>
-        parser.getLongValue * 1000000L
+        parser.getLongValue * 1000L
 
       case (_, StringType) =>
         val writer = new ByteArrayOutputStream()
@@ -129,15 +104,13 @@ object JacksonParser extends Logging {
       case (VALUE_STRING, FloatType) =>
         // Special case handling for NaN and Infinity.
         val value = parser.getText
-        if (value.equals("NaN") ||
-          value.equals("Infinity") ||
-          value.equals("+Infinity") ||
-          value.equals("-Infinity")) {
+        val lowerCaseValue = value.toLowerCase()
+        if (lowerCaseValue.equals("nan") ||
+          lowerCaseValue.equals("infinity") ||
+          lowerCaseValue.equals("-infinity") ||
+          lowerCaseValue.equals("inf") ||
+          lowerCaseValue.equals("-inf")) {
           value.toFloat
-        } else if (value.equals("+INF") || value.equals("INF")) {
-          Float.PositiveInfinity
-        } else if (value.equals("-INF")) {
-          Float.NegativeInfinity
         } else {
           throw new SparkSQLJsonProcessingException(s"Cannot parse $value as FloatType.")
         }
@@ -148,15 +121,13 @@ object JacksonParser extends Logging {
       case (VALUE_STRING, DoubleType) =>
         // Special case handling for NaN and Infinity.
         val value = parser.getText
-        if (value.equals("NaN") ||
-          value.equals("Infinity") ||
-          value.equals("+Infinity") ||
-          value.equals("-Infinity")) {
+        val lowerCaseValue = value.toLowerCase()
+        if (lowerCaseValue.equals("nan") ||
+          lowerCaseValue.equals("infinity") ||
+          lowerCaseValue.equals("-infinity") ||
+          lowerCaseValue.equals("inf") ||
+          lowerCaseValue.equals("-inf")) {
           value.toDouble
-        } else if (value.equals("+INF") || value.equals("INF")) {
-          Double.PositiveInfinity
-        } else if (value.equals("-INF")) {
-          Double.NegativeInfinity
         } else {
           throw new SparkSQLJsonProcessingException(s"Cannot parse $value as DoubleType.")
         }
@@ -185,8 +156,18 @@ object JacksonParser extends Logging {
       case (START_OBJECT, st: StructType) =>
         convertObject(factory, parser, st)
 
+      case (START_ARRAY, st: StructType) =>
+        // SPARK-3308: support reading top level JSON arrays and take every element
+        // in such an array as a row
+        convertArray(factory, parser, st)
+
       case (START_ARRAY, ArrayType(st, _)) =>
         convertArray(factory, parser, st)
+
+      case (START_OBJECT, ArrayType(st, _)) =>
+        // the business end of SPARK-3308:
+        // when an object is found but an array is requested just wrap it in a list
+        convertField(factory, parser, st) :: Nil
 
       case (START_OBJECT, MapType(StringType, kt, _)) =>
         convertMap(factory, parser, kt)
@@ -254,7 +235,7 @@ object JacksonParser extends Logging {
     new GenericArrayData(values.toArray)
   }
 
-  def parseJson(
+  private def parseJson(
       input: Iterator[String],
       schema: StructType,
       columnNameOfCorruptRecords: String,
@@ -262,20 +243,13 @@ object JacksonParser extends Logging {
 
     def failedRecord(record: String): Seq[InternalRow] = {
       // create a row even if no corrupt record column is present
-      if (configOptions.failFast) {
-        throw new RuntimeException(s"Malformed line in FAILFAST mode: $record")
+      val row = new GenericMutableRow(schema.length)
+      for (corruptIndex <- schema.getFieldIndex(columnNameOfCorruptRecords)) {
+        require(schema(corruptIndex).dataType == StringType)
+        row.update(corruptIndex, UTF8String.fromString(record))
       }
-      if (configOptions.dropMalformed) {
-        logWarning(s"Dropping malformed line: $record")
-        Nil
-      } else {
-        val row = new GenericMutableRow(schema.length)
-        for (corruptIndex <- schema.getFieldIndex(columnNameOfCorruptRecords)) {
-          require(schema(corruptIndex).dataType == StringType)
-          row.update(corruptIndex, UTF8String.fromString(record))
-        }
-        Seq(row)
-      }
+
+      Seq(row)
     }
 
     val factory = new JsonFactory()
@@ -289,7 +263,7 @@ object JacksonParser extends Logging {
           Utils.tryWithResource(factory.createParser(record)) { parser =>
             parser.nextToken()
 
-            convertRootField(factory, parser, schema) match {
+            convertField(factory, parser, schema) match {
               case null => failedRecord(record)
               case row: InternalRow => row :: Nil
               case array: ArrayData =>

@@ -73,10 +73,6 @@ class JsonFunctionsSuite extends QueryTest with SharedSQLContext {
     checkAnswer(
       df.select($"key", functions.json_tuple($"jstring", "f1", "f2", "f3", "f4", "f5")),
       expected)
-
-    checkAnswer(
-      df.selectExpr("key", "json_tuple(jstring, 'f1', 'f2', 'f3', 'f4', 'f5')"),
-      expected)
   }
 
   test("json_tuple filter and group") {

@@ -17,20 +17,19 @@
 
 package org.apache.spark.mllib.clustering
 
-import org.json4s._
 import org.json4s.JsonDSL._
+import org.json4s._
 import org.json4s.jackson.JsonMethods._
 
-import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.annotation.Since
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.graphx._
-import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.util.{Loader, MLUtils, Saveable}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Row, SQLContext}
 import org.apache.spark.util.random.XORShiftRandom
+import org.apache.spark.{Logging, SparkContext, SparkException}
 
 /**
  * Model produced by [[PowerIterationClustering]].
@@ -94,7 +93,7 @@ object PowerIterationClusteringModel extends Loader[PowerIterationClusteringMode
       val assignments = sqlContext.read.parquet(Loader.dataPath(path))
       Loader.checkSchema[PowerIterationClustering.Assignment](assignments.schema)
 
-      val assignmentsRDD = assignments.rdd.map {
+      val assignmentsRDD = assignments.map {
         case Row(id: Long, cluster: Int) => PowerIterationClustering.Assignment(id, cluster)
       }
 
@@ -111,9 +110,7 @@ object PowerIterationClusteringModel extends Loader[PowerIterationClusteringMode
  *
  * @param k Number of clusters.
  * @param maxIterations Maximum number of iterations of the PIC algorithm.
- * @param initMode Set the initialization mode. This can be either "random" to use a random vector
- *                 as vertex properties, or "degree" to use normalized sum similarities.
- *                 Default: random.
+ * @param initMode Initialization mode.
  *
  * @see [[http://en.wikipedia.org/wiki/Spectral_clustering Spectral clustering (Wikipedia)]]
  */
@@ -137,8 +134,6 @@ class PowerIterationClustering private[clustering] (
    */
   @Since("1.3.0")
   def setK(k: Int): this.type = {
-    require(k > 0,
-      s"Number of clusters must be positive but got ${k}")
     this.k = k
     this
   }
@@ -148,8 +143,6 @@ class PowerIterationClustering private[clustering] (
    */
   @Since("1.3.0")
   def setMaxIterations(maxIterations: Int): this.type = {
-    require(maxIterations >= 0,
-      s"Maximum of iterations must be nonnegative but got ${maxIterations}")
     this.maxIterations = maxIterations
     this
   }

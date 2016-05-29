@@ -24,8 +24,7 @@ along with if you launch Spark's interactive shell -- either `bin/spark-shell` f
 
 <div data-lang="scala"  markdown="1">
 
-Spark {{site.SPARK_VERSION}} is built and distributed to work with Scala {{site.SCALA_BINARY_VERSION}} 
-by default. (Spark can be built to work with other versions of Scala, too.) To write
+Spark {{site.SPARK_VERSION}} uses Scala {{site.SCALA_BINARY_VERSION}}. To write
 applications in Scala, you will need to use a compatible Scala version (e.g. {{site.SCALA_BINARY_VERSION}}.X).
 
 To write a Spark application, you need to add a Maven dependency on Spark. Spark is available through Maven Central at:
@@ -240,17 +239,16 @@ use IPython, set the `PYSPARK_DRIVER_PYTHON` variable to `ipython` when running 
 $ PYSPARK_DRIVER_PYTHON=ipython ./bin/pyspark
 {% endhighlight %}
 
-To use the Jupyter notebook (previously known as the IPython notebook), 
+You can customize the `ipython` command by setting `PYSPARK_DRIVER_PYTHON_OPTS`. For example, to launch
+the [IPython Notebook](http://ipython.org/notebook.html) with PyLab plot support:
 
 {% highlight bash %}
-$ PYSPARK_DRIVER_PYTHON=jupyter ./bin/pyspark
+$ PYSPARK_DRIVER_PYTHON=ipython PYSPARK_DRIVER_PYTHON_OPTS="notebook" ./bin/pyspark
 {% endhighlight %}
 
-You can customize the `ipython` or `jupyter` commands by setting `PYSPARK_DRIVER_PYTHON_OPTS`. 
-
-After the Jupyter Notebook server is launched, you can create a new "Python 2" notebook from
+After the IPython Notebook server is launched, you can create a new "Python 2" notebook from
 the "Files" tab. Inside the notebook, you can input the command `%pylab inline` as part of
-your notebook before you start to try Spark from the Jupyter notebook.
+your notebook before you start to try Spark from the IPython notebook.
 
 </div>
 
@@ -328,7 +326,7 @@ Text file RDDs can be created using `SparkContext`'s `textFile` method. This met
 
 {% highlight scala %}
 scala> val distFile = sc.textFile("data.txt")
-distFile: org.apache.spark.rdd.RDD[String] = data.txt MapPartitionsRDD[10] at textFile at <console>:26
+distFile: RDD[String] = MappedRDD@1d4cee08
 {% endhighlight %}
 
 Once created, `distFile` can be acted on by dataset operations. For example, we can add up the sizes of all the lines using the `map` and `reduce` operations as follows: `distFile.map(s => s.length).reduce((a, b) => a + b)`.
@@ -631,7 +629,7 @@ class MyClass {
 }
 {% endhighlight %}
 
-is equivalent to writing `rdd.map(x => this.field + x)`, which references all of `this`. To avoid this
+is equilvalent to writing `rdd.map(x => this.field + x)`, which references all of `this`. To avoid this
 issue, the simplest way is to copy `field` into a local variable instead of accessing it externally:
 
 {% highlight scala %}
@@ -1179,7 +1177,7 @@ that originally created it.
 
 In addition, each persisted RDD can be stored using a different *storage level*, allowing you, for example,
 to persist the dataset on disk, persist it in memory but as serialized Java objects (to save space),
-replicate it across nodes.
+replicate it across nodes, or store it off-heap in [Tachyon](http://tachyon-project.org/).
 These levels are set by passing a
 `StorageLevel` object ([Scala](api/scala/index.html#org.apache.spark.storage.StorageLevel),
 [Java](api/java/index.html?org/apache/spark/storage/StorageLevel.html),
@@ -1201,14 +1199,14 @@ storage levels is:
     partitions that don't fit on disk, and read them from there when they're needed. </td>
 </tr>
 <tr>
-  <td> MEMORY_ONLY_SER <br /> (Java and Scala) </td>
+  <td> MEMORY_ONLY_SER </td>
   <td> Store RDD as <i>serialized</i> Java objects (one byte array per partition).
     This is generally more space-efficient than deserialized objects, especially when using a
     <a href="tuning.html">fast serializer</a>, but more CPU-intensive to read.
   </td>
 </tr>
 <tr>
-  <td> MEMORY_AND_DISK_SER <br /> (Java and Scala) </td>
+  <td> MEMORY_AND_DISK_SER </td>
   <td> Similar to MEMORY_ONLY_SER, but spill partitions that don't fit in memory to disk instead of
     recomputing them on the fly each time they're needed. </td>
 </tr>
@@ -1220,11 +1218,22 @@ storage levels is:
   <td> MEMORY_ONLY_2, MEMORY_AND_DISK_2, etc.  </td>
   <td> Same as the levels above, but replicate each partition on two cluster nodes. </td>
 </tr>
+<tr>
+  <td> OFF_HEAP (experimental) </td>
+  <td> Store RDD in serialized format in <a href="http://tachyon-project.org">Tachyon</a>.
+    Compared to MEMORY_ONLY_SER, OFF_HEAP reduces garbage collection overhead and allows executors
+    to be smaller and to share a pool of memory, making it attractive in environments with
+    large heaps or multiple concurrent applications. Furthermore, as the RDDs reside in Tachyon,
+    the crash of an executor does not lead to losing the in-memory cache. In this mode, the memory
+    in Tachyon is discardable. Thus, Tachyon does not attempt to reconstruct a block that it evicts
+    from memory. If you plan to use Tachyon as the off heap store, Spark is compatible with Tachyon
+    out-of-the-box. Please refer to this <a href="http://tachyon-project.org/master/Running-Spark-on-Tachyon.html">page</a>
+    for the suggested version pairings.
+  </td>
+</tr>
 </table>
 
-**Note:** *In Python, stored objects will always be serialized with the [Pickle](https://docs.python.org/2/library/pickle.html) library, 
-so it does not matter whether you choose a serialized level. The available storage levels in Python include `MEMORY_ONLY`, `MEMORY_ONLY_2`, 
-`MEMORY_AND_DISK`, `MEMORY_AND_DISK_2`, `DISK_ONLY`, and `DISK_ONLY_2`.*
+**Note:** *In Python, stored objects will always be serialized with the [Pickle](https://docs.python.org/2/library/pickle.html) library, so it does not matter whether you choose a serialized level.*
 
 Spark also automatically persists some intermediate data in shuffle operations (e.g. `reduceByKey`), even without users calling `persist`. This is done to avoid recomputing the entire input if a node fails during the shuffle. We still recommend users call `persist` on the resulting RDD if they plan to reuse it.
 
@@ -1237,7 +1246,7 @@ efficiency. We recommend going through the following process to select one:
   This is the most CPU-efficient option, allowing operations on the RDDs to run as fast as possible.
 
 * If not, try using `MEMORY_ONLY_SER` and [selecting a fast serialization library](tuning.html) to
-make the objects much more space-efficient, but still reasonably fast to access. (Java and Scala)
+make the objects much more space-efficient, but still reasonably fast to access.
 
 * Don't spill to disk unless the functions that computed your datasets are expensive, or they filter
 a large amount of the data. Otherwise, recomputing a partition may be as fast as reading it from
@@ -1248,6 +1257,11 @@ requests from a web application). *All* the storage levels provide full fault to
 recomputing lost data, but the replicated ones let you continue running tasks on the RDD without
 waiting to recompute a lost partition.
 
+* In environments with high amounts of memory or multiple applications, the experimental `OFF_HEAP`
+mode has several advantages:
+   * It allows multiple executors to share the same pool of memory in Tachyon.
+   * It significantly reduces garbage collection costs.
+   * Cached data is not lost if individual executors crash.
 
 ### Removing Data
 
@@ -1327,21 +1341,15 @@ value of the broadcast variable (e.g. if the variable is shipped to a new node l
 
 ## Accumulators
 
-Accumulators are variables that are only "added" to through an associative and commutative operation and can
+Accumulators are variables that are only "added" to through an associative operation and can
 therefore be efficiently supported in parallel. They can be used to implement counters (as in
 MapReduce) or sums. Spark natively supports accumulators of numeric types, and programmers
-can add support for new types.
-
-If accumulators are created with a name, they will be
+can add support for new types. If accumulators are created with a name, they will be
 displayed in Spark's UI. This can be useful for understanding the progress of
 running stages (NOTE: this is not yet supported in Python).
 
-<p style="text-align: center;">
-  <img src="img/spark-webui-accumulators.png" title="Accumulators in the Spark UI" alt="Accumulators in the Spark UI" />
-</p>
-
 An accumulator is created from an initial value `v` by calling `SparkContext.accumulator(v)`. Tasks
-running on a cluster can then add to it using the `add` method or the `+=` operator (in Scala and Python).
+running on the cluster can then add to it using the `add` method or the `+=` operator (in Scala and Python).
 However, they cannot read its value.
 Only the driver program can read the accumulator's value, using its `value` method.
 
@@ -1353,7 +1361,7 @@ The code below shows an accumulator being used to add up the elements of an arra
 
 {% highlight scala %}
 scala> val accum = sc.accumulator(0, "My Accumulator")
-accum: org.apache.spark.Accumulator[Int] = 0
+accum: spark.Accumulator[Int] = 0
 
 scala> sc.parallelize(Array(1, 2, 3, 4)).foreach(x => accum += x)
 ...
@@ -1474,11 +1482,11 @@ Accumulators do not change the lazy evaluation model of Spark. If they are being
 
 <div class="codetabs">
 
-<div data-lang="scala" markdown="1">
+<div data-lang="scala"  markdown="1">
 {% highlight scala %}
 val accum = sc.accumulator(0)
-data.map { x => accum += x; x }
-// Here, accum is still 0 because no actions have caused the map operation to be computed.
+data.map { x => accum += x; f(x) }
+// Here, accum is still 0 because no actions have caused the <code>map</code> to be computed.
 {% endhighlight %}
 </div>
 

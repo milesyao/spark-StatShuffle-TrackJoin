@@ -32,23 +32,12 @@ import org.apache.spark.sql.catalyst.expressions.{Cast, Literal}
 import org.apache.spark.sql.types._
 
 
-object PartitionDirectory {
-  def apply(values: InternalRow, path: String): PartitionDirectory =
-    apply(values, new Path(path))
-}
+private[sql] case class Partition(values: InternalRow, path: String)
 
-/**
- * Holds a directory in a partitioned collection of files as well as as the partition values
- * in the form of a Row.  Before scanning, the files at `path` need to be enumerated.
- */
-private[sql] case class PartitionDirectory(values: InternalRow, path: Path)
-
-private[sql] case class PartitionSpec(
-    partitionColumns: StructType,
-    partitions: Seq[PartitionDirectory])
+private[sql] case class PartitionSpec(partitionColumns: StructType, partitions: Seq[Partition])
 
 private[sql] object PartitionSpec {
-  val emptySpec = PartitionSpec(StructType(Seq.empty[StructField]), Seq.empty[PartitionDirectory])
+  val emptySpec = PartitionSpec(StructType(Seq.empty[StructField]), Seq.empty[Partition])
 }
 
 private[sql] object PartitioningUtils {
@@ -94,7 +83,7 @@ private[sql] object PartitioningUtils {
     }.unzip
 
     // We create pairs of (path -> path's partition value) here
-    // If the corresponding partition value is None, the pair will be skipped
+    // If the corresponding partition value is None, the pair will be skiped
     val pathsWithPartitionValues = paths.zip(partitionValues).flatMap(x => x._2.map(x._1 -> _))
 
     if (pathsWithPartitionValues.isEmpty) {
@@ -113,12 +102,11 @@ private[sql] object PartitioningUtils {
       // It will be recognised as conflicting directory structure:
       //   "hdfs://host:9000/invalidPath"
       //   "hdfs://host:9000/path"
-      // TODO: Selective case sensitivity.
-      val discoveredBasePaths = optDiscoveredBasePaths.flatMap(x => x).map(_.toString.toLowerCase())
+      val disvoeredBasePaths = optDiscoveredBasePaths.flatMap(x => x)
       assert(
-        discoveredBasePaths.distinct.size == 1,
+        disvoeredBasePaths.distinct.size == 1,
         "Conflicting directory structures detected. Suspicious paths:\b" +
-          discoveredBasePaths.distinct.mkString("\n\t", "\n\t", "\n\n") +
+          disvoeredBasePaths.distinct.mkString("\n\t", "\n\t", "\n\n") +
           "If provided paths are partition directories, please set " +
           "\"basePath\" in the options of the data source to specify the " +
           "root directory of the table. If there are multiple root directories, " +
@@ -139,7 +127,7 @@ private[sql] object PartitioningUtils {
       // Finally, we create `Partition`s based on paths and resolved partition values.
       val partitions = resolvedPartitionValues.zip(pathsWithPartitionValues).map {
         case (PartitionValues(_, literals), (path, _)) =>
-          PartitionDirectory(InternalRow.fromSeq(literals.map(_.value)), path)
+          Partition(InternalRow.fromSeq(literals.map(_.value)), path.toString)
       }
 
       PartitionSpec(StructType(fields), partitions)
@@ -254,9 +242,7 @@ private[sql] object PartitioningUtils {
     if (pathsWithPartitionValues.isEmpty) {
       Seq.empty
     } else {
-      // TODO: Selective case sensitivity.
-      val distinctPartColNames =
-        pathsWithPartitionValues.map(_._2.columnNames.map(_.toLowerCase())).distinct
+      val distinctPartColNames = pathsWithPartitionValues.map(_._2.columnNames).distinct
       assert(
         distinctPartColNames.size == 1,
         listConflictingPartitionColumns(pathsWithPartitionValues))
@@ -341,34 +327,14 @@ private[sql] object PartitioningUtils {
 
   def validatePartitionColumnDataTypes(
       schema: StructType,
-      partitionColumns: Seq[String],
+      partitionColumns: Array[String],
       caseSensitive: Boolean): Unit = {
 
-    partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
+    ResolvedDataSource.partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
         case _: AtomicType => // OK
         case _ => throw new AnalysisException(s"Cannot use ${field.dataType} for partition column")
       }
-    }
-  }
-
-  def partitionColumnsSchema(
-      schema: StructType,
-      partitionColumns: Seq[String],
-      caseSensitive: Boolean): StructType = {
-    val equality = columnNameEquality(caseSensitive)
-    StructType(partitionColumns.map { col =>
-      schema.find(f => equality(f.name, col)).getOrElse {
-        throw new RuntimeException(s"Partition column $col not found in schema $schema")
-      }
-    }).asNullable
-  }
-
-  private def columnNameEquality(caseSensitive: Boolean): (String, String) => Boolean = {
-    if (caseSensitive) {
-      org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
-    } else {
-      org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
     }
   }
 
@@ -424,7 +390,7 @@ private[sql] object PartitioningUtils {
     path.foreach { c =>
       if (needsEscaping(c)) {
         builder.append('%')
-        builder.append(f"${c.asInstanceOf[Int]}%02X")
+        builder.append(f"${c.asInstanceOf[Int]}%02x")
       } else {
         builder.append(c)
       }
@@ -441,9 +407,9 @@ private[sql] object PartitioningUtils {
       val c = path.charAt(i)
       if (c == '%' && i + 2 < path.length) {
         val code: Int = try {
-          Integer.parseInt(path.substring(i + 1, i + 3), 16)
-        } catch {
-          case _: Exception => -1
+          Integer.valueOf(path.substring(i + 1, i + 3), 16)
+        } catch { case e: Exception =>
+          -1: Integer
         }
         if (code >= 0) {
           sb.append(code.asInstanceOf[Char])

@@ -19,16 +19,14 @@ package test.org.apache.spark.sql.sources;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.sql.*;
@@ -39,13 +37,14 @@ import org.apache.spark.util.Utils;
 
 public class JavaSaveLoadSuite {
 
-  private transient SparkSession spark;
-  private transient JavaSparkContext jsc;
+  private transient JavaSparkContext sc;
+  private transient SQLContext sqlContext;
 
+  String originalDefaultSource;
   File path;
-  Dataset<Row> df;
+  DataFrame df;
 
-  private static void checkAnswer(Dataset<Row> actual, List<Row> expected) {
+  private static void checkAnswer(DataFrame actual, List<Row> expected) {
     String errorMessage = QueryTest$.MODULE$.checkAnswer(actual, expected);
     if (errorMessage != null) {
       Assert.fail(errorMessage);
@@ -54,12 +53,11 @@ public class JavaSaveLoadSuite {
 
   @Before
   public void setUp() throws IOException {
-    spark = SparkSession.builder()
-      .master("local[*]")
-      .appName("testing")
-      .getOrCreate();
-    jsc = new JavaSparkContext(spark.sparkContext());
+    SparkContext _sc = new SparkContext("local[*]", "testing");
+    sqlContext = new SQLContext(_sc);
+    sc = new JavaSparkContext(_sc);
 
+    originalDefaultSource = sqlContext.conf().defaultDataSourceName();
     path =
       Utils.createTempDir(System.getProperty("java.io.tmpdir"), "datasource").getCanonicalFile();
     if (path.exists()) {
@@ -70,15 +68,16 @@ public class JavaSaveLoadSuite {
     for (int i = 0; i < 10; i++) {
       jsonObjects.add("{\"a\":" + i + ", \"b\":\"str" + i + "\"}");
     }
-    JavaRDD<String> rdd = jsc.parallelize(jsonObjects);
-    df = spark.read().json(rdd);
-    df.createOrReplaceTempView("jsonTable");
+    JavaRDD<String> rdd = sc.parallelize(jsonObjects);
+    df = sqlContext.read().json(rdd);
+    df.registerTempTable("jsonTable");
   }
 
   @After
   public void tearDown() {
-    spark.stop();
-    spark = null;
+    sqlContext.sparkContext().stop();
+    sqlContext = null;
+    sc = null;
   }
 
   @Test
@@ -86,7 +85,7 @@ public class JavaSaveLoadSuite {
     Map<String, String> options = new HashMap<>();
     options.put("path", path.toString());
     df.write().mode(SaveMode.ErrorIfExists).format("json").options(options).save();
-    Dataset<Row> loadedDF = spark.read().format("json").options(options).load();
+    DataFrame loadedDF = sqlContext.read().format("json").options(options).load();
     checkAnswer(loadedDF, df.collectAsList());
   }
 
@@ -99,8 +98,8 @@ public class JavaSaveLoadSuite {
     List<StructField> fields = new ArrayList<>();
     fields.add(DataTypes.createStructField("b", DataTypes.StringType, true));
     StructType schema = DataTypes.createStructType(fields);
-    Dataset<Row> loadedDF = spark.read().format("json").schema(schema).options(options).load();
+    DataFrame loadedDF = sqlContext.read().format("json").schema(schema).options(options).load();
 
-    checkAnswer(loadedDF, spark.sql("SELECT b FROM jsonTable").collectAsList());
+    checkAnswer(loadedDF, sqlContext.sql("SELECT b FROM jsonTable").collectAsList());
   }
 }

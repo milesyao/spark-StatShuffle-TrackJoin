@@ -23,8 +23,6 @@ import org.scalatest.BeforeAndAfterAll
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.hive.test.TestHiveSingleton
-import org.apache.spark.sql.sources._
-import org.apache.spark.sql.types._
 
 case class OrcData(intField: Int, stringField: String)
 
@@ -51,7 +49,7 @@ abstract class OrcSuite extends QueryTest with TestHiveSingleton with BeforeAndA
       .makeRDD(1 to 10)
       .map(i => OrcData(i, s"part-$i"))
       .toDF()
-      .createOrReplaceTempView(s"orc_temp_table")
+      .registerTempTable(s"orc_temp_table")
 
     sql(
       s"""CREATE EXTERNAL TABLE normal_orc(
@@ -69,12 +67,8 @@ abstract class OrcSuite extends QueryTest with TestHiveSingleton with BeforeAndA
   }
 
   override def afterAll(): Unit = {
-    try {
-      orcTableDir.delete()
-      orcTableAsDir.delete()
-    } finally {
-      super.afterAll()
-    }
+    orcTableDir.delete()
+    orcTableAsDir.delete()
   }
 
   test("create temporary orc table") {
@@ -136,17 +130,17 @@ abstract class OrcSuite extends QueryTest with TestHiveSingleton with BeforeAndA
     val df = sql(
       """
         |SELECT
-        |  CAST(null as TINYINT) as c0,
-        |  CAST(null as SMALLINT) as c1,
-        |  CAST(null as INT) as c2,
-        |  CAST(null as BIGINT) as c3,
-        |  CAST(null as FLOAT) as c4,
-        |  CAST(null as DOUBLE) as c5,
-        |  CAST(null as DECIMAL(7,2)) as c6,
-        |  CAST(null as TIMESTAMP) as c7,
-        |  CAST(null as DATE) as c8,
-        |  CAST(null as STRING) as c9,
-        |  CAST(null as VARCHAR(10)) as c10
+        |  CAST(null as TINYINT),
+        |  CAST(null as SMALLINT),
+        |  CAST(null as INT),
+        |  CAST(null as BIGINT),
+        |  CAST(null as FLOAT),
+        |  CAST(null as DOUBLE),
+        |  CAST(null as DECIMAL(7,2)),
+        |  CAST(null as TIMESTAMP),
+        |  CAST(null as DATE),
+        |  CAST(null as STRING),
+        |  CAST(null as VARCHAR(10))
         |FROM orc_temp_table limit 1
       """.stripMargin)
 
@@ -179,38 +173,5 @@ class OrcSourceSuite extends OrcSuite {
          |  PATH '${new File(orcTableAsDir.getAbsolutePath).getCanonicalPath}'
          |)
        """.stripMargin)
-  }
-
-  test("SPARK-12218 Converting conjunctions into ORC SearchArguments") {
-    // The `LessThan` should be converted while the `StringContains` shouldn't
-    val schema = new StructType(
-      Array(
-        StructField("a", IntegerType, nullable = true),
-        StructField("b", StringType, nullable = true)))
-    assertResult(
-      """leaf-0 = (LESS_THAN a 10)
-        |expr = leaf-0
-      """.stripMargin.trim
-    ) {
-      OrcFilters.createFilter(schema, Array(
-        LessThan("a", 10),
-        StringContains("b", "prefix")
-      )).get.toString
-    }
-
-    // The `LessThan` should be converted while the whole inner `And` shouldn't
-    assertResult(
-      """leaf-0 = (LESS_THAN a 10)
-        |expr = leaf-0
-      """.stripMargin.trim
-    ) {
-      OrcFilters.createFilter(schema, Array(
-        LessThan("a", 10),
-        Not(And(
-          GreaterThan("a", 1),
-          StringContains("b", "prefix")
-        ))
-      )).get.toString
-    }
   }
 }

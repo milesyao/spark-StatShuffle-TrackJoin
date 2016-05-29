@@ -17,11 +17,10 @@
 
 package org.apache.spark.sql.hive
 
-import org.scalatest.BeforeAndAfterAll
-
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.hive.test.TestHiveSingleton
+import org.scalatest.BeforeAndAfterAll
 
 // TODO ideally we should put the test suite into the package `sql`, as
 // `hive` package is optional in compiling, however, `SQLContext.sql` doesn't
@@ -33,17 +32,12 @@ class HiveDataFrameAnalyticsSuite extends QueryTest with TestHiveSingleton with 
   private var testData: DataFrame = _
 
   override def beforeAll() {
-    super.beforeAll()
     testData = Seq((1, 2), (2, 2), (3, 4)).toDF("a", "b")
     hiveContext.registerDataFrameAsTable(testData, "mytable")
   }
 
   override def afterAll(): Unit = {
-    try {
-      hiveContext.dropTempTable("mytable")
-    } finally {
-      super.afterAll()
-    }
+    hiveContext.dropTempTable("mytable")
   }
 
   test("rollup") {
@@ -55,6 +49,17 @@ class HiveDataFrameAnalyticsSuite extends QueryTest with TestHiveSingleton with 
     checkAnswer(
       testData.rollup("a", "b").agg(sum("b")),
       sql("select a, b, sum(b) from mytable group by a, b with rollup").collect()
+    )
+  }
+
+  test("collect functions") {
+    checkAnswer(
+      testData.select(collect_list($"a"), collect_list($"b")),
+      Seq(Row(Seq(1, 2, 3), Seq(2, 2, 4)))
+    )
+    checkAnswer(
+      testData.select(collect_set($"a"), collect_set($"b")),
+      Seq(Row(Seq(1, 2, 3), Seq(2, 4)))
     )
   }
 

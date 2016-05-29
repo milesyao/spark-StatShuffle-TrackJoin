@@ -17,20 +17,19 @@
 
 from __future__ import print_function
 
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
 # $example on$
 from pyspark.ml.feature import PolynomialExpansion
 from pyspark.mllib.linalg import Vectors
 # $example off$
-from pyspark.sql import SparkSession
 
 if __name__ == "__main__":
-    spark = SparkSession\
-        .builder\
-        .appName("PolynomialExpansionExample")\
-        .getOrCreate()
+    sc = SparkContext(appName="PolynomialExpansionExample")
+    sqlContext = SQLContext(sc)
 
     # $example on$
-    df = spark\
+    df = sqlContext\
         .createDataFrame([(Vectors.dense([-2.0, 2.3]),),
                           (Vectors.dense([0.0, 0.0]),),
                           (Vectors.dense([0.6, -1.1]),)],
@@ -41,4 +40,4 @@ if __name__ == "__main__":
         print(expanded)
     # $example off$
 
-    spark.stop()
+    sc.stop()

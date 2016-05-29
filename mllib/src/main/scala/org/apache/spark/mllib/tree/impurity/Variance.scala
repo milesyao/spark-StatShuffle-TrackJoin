@@ -71,7 +71,7 @@ object Variance extends Impurity {
  * in order to compute impurity from a sample.
  * Note: Instances of this class do not hold the data; they operate on views of the data.
  */
-private[spark] class VarianceAggregator()
+private[tree] class VarianceAggregator()
   extends ImpurityAggregator(statsSize = 3) with Serializable {
 
   /**
@@ -93,6 +93,7 @@ private[spark] class VarianceAggregator()
   def getCalculator(allStats: Array[Double], offset: Int): VarianceCalculator = {
     new VarianceCalculator(allStats.view(offset, offset + statsSize).toArray)
   }
+
 }
 
 /**
@@ -103,9 +104,9 @@ private[spark] class VarianceAggregator()
  */
 private[spark] class VarianceCalculator(stats: Array[Double]) extends ImpurityCalculator(stats) {
 
-  require(stats.length == 3,
+  require(stats.size == 3,
     s"VarianceCalculator requires sufficient statistics array stats to be of length 3," +
-    s" but was given array of length ${stats.length}.")
+    s" but was given array of length ${stats.size}.")
 
   /**
    * Make a deep copy of this [[ImpurityCalculator]].

@@ -17,43 +17,27 @@
 
 package org.apache.spark.sql.catalyst
 
-import org.apache.spark.sql.catalyst.analysis._
-
-/**
- * Interface for configuration options used in the catalyst module.
- */
-trait CatalystConf {
+private[spark] trait CatalystConf {
   def caseSensitiveAnalysis: Boolean
 
-  def orderByOrdinal: Boolean
-  def groupByOrdinal: Boolean
+  protected[spark] def specializeSingleDistinctAggPlanning: Boolean
+}
 
-  def optimizerMaxIterations: Int
-  def optimizerInSetConversionThreshold: Int
-  def maxCaseBranchesForCodegen: Int
+/**
+ * A trivial conf that is empty.  Used for testing when all
+ * relations are already filled in and the analyser needs only to resolve attribute references.
+ */
+object EmptyConf extends CatalystConf {
+  override def caseSensitiveAnalysis: Boolean = {
+    throw new UnsupportedOperationException
+  }
 
-  def runSQLonFile: Boolean
-
-  def warehousePath: String
-
-  /**
-   * Returns the [[Resolver]] for the current configuration, which can be used to determine if two
-   * identifiers are equal.
-   */
-  def resolver: Resolver = {
-    if (caseSensitiveAnalysis) caseSensitiveResolution else caseInsensitiveResolution
+  protected[spark] override def specializeSingleDistinctAggPlanning: Boolean = {
+    throw new UnsupportedOperationException
   }
 }
 
-
 /** A CatalystConf that can be used for local testing. */
-case class SimpleCatalystConf(
-    caseSensitiveAnalysis: Boolean,
-    orderByOrdinal: Boolean = true,
-    groupByOrdinal: Boolean = true,
-    optimizerMaxIterations: Int = 100,
-    optimizerInSetConversionThreshold: Int = 10,
-    maxCaseBranchesForCodegen: Int = 20,
-    runSQLonFile: Boolean = true,
-    warehousePath: String = "/user/hive/warehouse")
-  extends CatalystConf
+case class SimpleCatalystConf(caseSensitiveAnalysis: Boolean) extends CatalystConf {
+  protected[spark] override def specializeSingleDistinctAggPlanning: Boolean = true
+}

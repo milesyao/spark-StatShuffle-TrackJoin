@@ -24,7 +24,7 @@ import scala.xml.Node
 
 import org.apache.commons.lang3.StringEscapeUtils
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.Logging
 import org.apache.spark.ui.{UIUtils, WebUIPage}
 
 private[ui] class AllExecutionsPage(parent: SQLTab) extends WebUIPage("") with Logging {
@@ -55,12 +55,6 @@ private[ui] class AllExecutionsPage(parent: SQLTab) extends WebUIPage("") with L
       }
       _content
     }
-    content ++=
-      <script>
-        function clickDetail(details) {{
-          details.parentNode.querySelector('.stage-details').classList.toggle('collapsed')
-        }}
-      </script>
     UIUtils.headerSparkPage("SQL", content, parent, Some(5000))
   }
 }
@@ -124,12 +118,14 @@ private[ui] abstract class ExecutionTable(
           {failedJobs}
         </td>
       }}
+      {detailCell(executionUIData.physicalPlanDescription)}
     </tr>
   }
 
   private def descriptionCell(execution: SQLExecutionUIData): Seq[Node] = {
     val details = if (execution.details.nonEmpty) {
-      <span onclick="clickDetail(this)" class="expand-details">
+      <span onclick="this.parentNode.querySelector('.stage-details').classList.toggle('collapsed')"
+            class="expand-details">
         +details
       </span> ++
       <div class="stage-details collapsed">
@@ -144,6 +140,30 @@ private[ui] abstract class ExecutionTable(
     }
 
     <div>{desc} {details}</div>
+  }
+
+  private def detailCell(physicalPlan: String): Seq[Node] = {
+    val isMultiline = physicalPlan.indexOf('\n') >= 0
+    val summary = StringEscapeUtils.escapeHtml4(
+      if (isMultiline) {
+        physicalPlan.substring(0, physicalPlan.indexOf('\n'))
+      } else {
+        physicalPlan
+      })
+    val details = if (isMultiline) {
+      // scalastyle:off
+      <span onclick="this.parentNode.querySelector('.stacktrace-details').classList.toggle('collapsed')"
+            class="expand-details">
+        +details
+      </span> ++
+        <div class="stacktrace-details collapsed">
+          <pre>{physicalPlan}</pre>
+        </div>
+      // scalastyle:on
+    } else {
+      ""
+    }
+    <td>{summary}{details}</td>
   }
 
   def toNodeSeq: Seq[Node] = {
@@ -177,7 +197,7 @@ private[ui] class RunningExecutionTable(
     showFailedJobs = true) {
 
   override protected def header: Seq[String] =
-    baseHeader ++ Seq("Running Jobs", "Succeeded Jobs", "Failed Jobs")
+    baseHeader ++ Seq("Running Jobs", "Succeeded Jobs", "Failed Jobs", "Detail")
 }
 
 private[ui] class CompletedExecutionTable(
@@ -195,7 +215,7 @@ private[ui] class CompletedExecutionTable(
     showSucceededJobs = true,
     showFailedJobs = false) {
 
-  override protected def header: Seq[String] = baseHeader ++ Seq("Jobs")
+  override protected def header: Seq[String] = baseHeader ++ Seq("Jobs", "Detail")
 }
 
 private[ui] class FailedExecutionTable(
@@ -214,5 +234,5 @@ private[ui] class FailedExecutionTable(
     showFailedJobs = true) {
 
   override protected def header: Seq[String] =
-    baseHeader ++ Seq("Succeeded Jobs", "Failed Jobs")
+    baseHeader ++ Seq("Succeeded Jobs", "Failed Jobs", "Detail")
 }

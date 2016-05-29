@@ -18,7 +18,6 @@
 package org.apache.spark.streaming.util
 
 import java.io.ByteArrayOutputStream
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit._
 
 import org.apache.spark.SparkFunSuite
@@ -35,7 +34,7 @@ class RateLimitedOutputStreamSuite extends SparkFunSuite {
     val underlying = new ByteArrayOutputStream
     val data = "X" * 41000
     val stream = new RateLimitedOutputStream(underlying, desiredBytesPerSec = 10000)
-    val elapsedNs = benchmark { stream.write(data.getBytes(StandardCharsets.UTF_8)) }
+    val elapsedNs = benchmark { stream.write(data.getBytes("UTF-8")) }
 
     val seconds = SECONDS.convert(elapsedNs, NANOSECONDS)
     assert(seconds >= 4, s"Seconds value ($seconds) is less than 4.")

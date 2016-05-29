@@ -22,8 +22,6 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.types._
 
-@ExpressionDescription(
-  usage = "_FUNC_(x) - Returns the sum calculated from values of a group.")
 case class Sum(child: Expression) extends DeclarativeAggregate {
 
   override def children: Seq[Expression] = child :: Nil
@@ -42,6 +40,8 @@ case class Sum(child: Expression) extends DeclarativeAggregate {
   private lazy val resultType = child.dataType match {
     case DecimalType.Fixed(precision, scale) =>
       DecimalType.bounded(precision + 10, scale)
+    // TODO: Remove this line once we remove the NullType from inputTypes.
+    case NullType => IntegerType
     case _ => child.dataType
   }
 
@@ -57,26 +57,18 @@ case class Sum(child: Expression) extends DeclarativeAggregate {
     /* sum = */ Literal.create(null, sumDataType)
   )
 
-  override lazy val updateExpressions: Seq[Expression] = {
-    if (child.nullable) {
-      Seq(
-        /* sum = */
-        Coalesce(Seq(Add(Coalesce(Seq(sum, zero)), Cast(child, sumDataType)), sum))
-      )
-    } else {
-      Seq(
-        /* sum = */
-        Add(Coalesce(Seq(sum, zero)), Cast(child, sumDataType))
-      )
-    }
-  }
+  override lazy val updateExpressions: Seq[Expression] = Seq(
+    /* sum = */
+    Coalesce(Seq(Add(Coalesce(Seq(sum, zero)), Cast(child, sumDataType)), sum))
+  )
 
   override lazy val mergeExpressions: Seq[Expression] = {
+    val add = Add(Coalesce(Seq(sum.left, zero)), Cast(sum.right, sumDataType))
     Seq(
       /* sum = */
-      Coalesce(Seq(Add(Coalesce(Seq(sum.left, zero)), sum.right), sum.left))
+      Coalesce(Seq(add, sum.left))
     )
   }
 
-  override lazy val evaluateExpression: Expression = sum
+  override lazy val evaluateExpression: Expression = Cast(sum, resultType)
 }

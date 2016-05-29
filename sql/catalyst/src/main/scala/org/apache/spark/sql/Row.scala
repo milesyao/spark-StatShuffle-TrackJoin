@@ -20,6 +20,7 @@ package org.apache.spark.sql
 import scala.collection.JavaConverters._
 import scala.util.hashing.MurmurHash3
 
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.sql.types.StructType
 
@@ -151,7 +152,7 @@ trait Row extends Serializable {
    *   BinaryType -> byte array
    *   ArrayType -> scala.collection.Seq (use getList for java.util.List)
    *   MapType -> scala.collection.Map (use getJavaMap for java.util.Map)
-   *   StructType -> org.apache.spark.sql.Row
+   *   StructType -> org.apache.spark.sql.Row (or Product)
    * }}}
    */
   def apply(i: Int): Any = get(i)
@@ -176,7 +177,7 @@ trait Row extends Serializable {
    *   BinaryType -> byte array
    *   ArrayType -> scala.collection.Seq (use getList for java.util.List)
    *   MapType -> scala.collection.Map (use getJavaMap for java.util.Map)
-   *   StructType -> org.apache.spark.sql.Row
+   *   StructType -> org.apache.spark.sql.Row (or Product)
    * }}}
    */
   def get(i: Int): Any
@@ -305,7 +306,7 @@ trait Row extends Serializable {
    * @throws ClassCastException when data type does not match.
    */
   def getStruct(i: Int): Row = {
-    // Product and Row both are recognized as StructType in a Row
+    // Product and Row both are recoginized as StructType in a Row
     val t = get(i)
     if (t.isInstanceOf[Product]) {
       Row.fromTuple(t.asInstanceOf[Product])
@@ -338,7 +339,7 @@ trait Row extends Serializable {
    * Returns the index of a given field name.
    *
    * @throws UnsupportedOperationException when schema is not defined.
-   * @throws IllegalArgumentException when a field `name` does not exist.
+   * @throws IllegalArgumentException when fieldName do not exist.
    */
   def fieldIndex(name: String): Int = {
     throw new UnsupportedOperationException("fieldIndex on a Row without schema is undefined.")

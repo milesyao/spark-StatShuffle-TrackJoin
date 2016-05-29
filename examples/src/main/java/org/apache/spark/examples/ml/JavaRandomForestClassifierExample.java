@@ -17,6 +17,8 @@
 
 package org.apache.spark.examples.ml;
 
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaSparkContext;
 // $example on$
 import org.apache.spark.ml.Pipeline;
 import org.apache.spark.ml.PipelineModel;
@@ -25,21 +27,19 @@ import org.apache.spark.ml.classification.RandomForestClassificationModel;
 import org.apache.spark.ml.classification.RandomForestClassifier;
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator;
 import org.apache.spark.ml.feature.*;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.DataFrame;
+import org.apache.spark.sql.SQLContext;
 // $example off$
 
 public class JavaRandomForestClassifierExample {
   public static void main(String[] args) {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaRandomForestClassifierExample")
-      .getOrCreate();
+    SparkConf conf = new SparkConf().setAppName("JavaRandomForestClassifierExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext sqlContext = new SQLContext(jsc);
 
     // $example on$
     // Load and parse the data file, converting it to a DataFrame.
-    Dataset<Row> data = spark.read().format("libsvm").load("data/mllib/sample_libsvm_data.txt");
+    DataFrame data = sqlContext.read().format("libsvm").load("data/mllib/sample_libsvm_data.txt");
 
     // Index labels, adding metadata to the label column.
     // Fit on whole dataset to include all labels in index.
@@ -56,9 +56,9 @@ public class JavaRandomForestClassifierExample {
       .fit(data);
 
     // Split the data into training and test sets (30% held out for testing)
-    Dataset<Row>[] splits = data.randomSplit(new double[] {0.7, 0.3});
-    Dataset<Row> trainingData = splits[0];
-    Dataset<Row> testData = splits[1];
+    DataFrame[] splits = data.randomSplit(new double[] {0.7, 0.3});
+    DataFrame trainingData = splits[0];
+    DataFrame testData = splits[1];
 
     // Train a RandomForest model.
     RandomForestClassifier rf = new RandomForestClassifier()
@@ -79,7 +79,7 @@ public class JavaRandomForestClassifierExample {
     PipelineModel model = pipeline.fit(trainingData);
 
     // Make predictions.
-    Dataset<Row> predictions = model.transform(testData);
+    DataFrame predictions = model.transform(testData);
 
     // Select example rows to display.
     predictions.select("predictedLabel", "label", "features").show(5);
@@ -96,6 +96,6 @@ public class JavaRandomForestClassifierExample {
     System.out.println("Learned classification forest model:\n" + rfModel.toDebugString());
     // $example off$
 
-    spark.stop();
+    jsc.stop();
   }
 }

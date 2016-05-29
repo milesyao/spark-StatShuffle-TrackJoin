@@ -17,97 +17,134 @@
 
 package org.apache.spark.storage
 
-import java.io.{FileOutputStream, IOException, RandomAccessFile}
+import java.io.{IOException, File, FileOutputStream, RandomAccessFile}
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel.MapMode
 
-import com.google.common.io.Closeables
-
-import org.apache.spark.SparkConf
-import org.apache.spark.internal.Logging
+import org.apache.spark.Logging
+import org.apache.spark.serializer.Serializer
 import org.apache.spark.util.Utils
-import org.apache.spark.util.io.ChunkedByteBuffer
 
 /**
  * Stores BlockManager blocks on disk.
  */
-private[spark] class DiskStore(conf: SparkConf, diskManager: DiskBlockManager) extends Logging {
+private[spark] class DiskStore(blockManager: BlockManager, diskManager: DiskBlockManager)
+  extends BlockStore(blockManager) with Logging {
 
-  private val minMemoryMapBytes = conf.getSizeAsBytes("spark.storage.memoryMapThreshold", "2m")
+  val minMemoryMapBytes = blockManager.conf.getSizeAsBytes("spark.storage.memoryMapThreshold", "2m")
 
-  def getSize(blockId: BlockId): Long = {
+  override def getSize(blockId: BlockId): Long = {
     diskManager.getFile(blockId.name).length
   }
 
-  /**
-   * Invokes the provided callback function to write the specific block.
-   *
-   * @throws IllegalStateException if the block already exists in the disk store.
-   */
-  def put(blockId: BlockId)(writeFunc: FileOutputStream => Unit): Unit = {
-    if (contains(blockId)) {
-      throw new IllegalStateException(s"Block $blockId is already present in the disk store")
-    }
+  override def putBytes(blockId: BlockId, _bytes: ByteBuffer, level: StorageLevel): PutResult = {
+    // So that we do not modify the input offsets !
+    // duplicate does not copy buffer, so inexpensive
+    val bytes = _bytes.duplicate()
     logDebug(s"Attempting to put block $blockId")
     val startTime = System.currentTimeMillis
     val file = diskManager.getFile(blockId)
-    val fileOutputStream = new FileOutputStream(file)
-    var threwException: Boolean = true
-    try {
-      writeFunc(fileOutputStream)
-      threwException = false
-    } finally {
-      try {
-        Closeables.close(fileOutputStream, threwException)
-      } finally {
-         if (threwException) {
-          remove(blockId)
-        }
+    val channel = new FileOutputStream(file).getChannel
+    Utils.tryWithSafeFinally {
+      while (bytes.remaining > 0) {
+        channel.write(bytes)
       }
+    } {
+      channel.close()
     }
     val finishTime = System.currentTimeMillis
     logDebug("Block %s stored as %s file on disk in %d ms".format(
-      file.getName,
-      Utils.bytesToString(file.length()),
-      finishTime - startTime))
+      file.getName, Utils.bytesToString(bytes.limit), finishTime - startTime))
+    PutResult(bytes.limit(), Right(bytes.duplicate()))
   }
 
-  def putBytes(blockId: BlockId, bytes: ChunkedByteBuffer): Unit = {
-    put(blockId) { fileOutputStream =>
-      val channel = fileOutputStream.getChannel
+  override def putArray(
+      blockId: BlockId,
+      values: Array[Any],
+      level: StorageLevel,
+      returnValues: Boolean): PutResult = {
+    putIterator(blockId, values.toIterator, level, returnValues)
+  }
+
+  override def putIterator(
+      blockId: BlockId,
+      values: Iterator[Any],
+      level: StorageLevel,
+      returnValues: Boolean): PutResult = {
+
+    logDebug(s"Attempting to write values for block $blockId")
+    val startTime = System.currentTimeMillis
+    val file = diskManager.getFile(blockId)
+    val outputStream = new FileOutputStream(file)
+    try {
       Utils.tryWithSafeFinally {
-        bytes.writeFully(channel)
+        blockManager.dataSerializeStream(blockId, outputStream, values)
       } {
-        channel.close()
+        // Close outputStream here because it should be closed before file is deleted.
+        outputStream.close()
       }
+    } catch {
+      case e: Throwable =>
+        if (file.exists()) {
+          if (!file.delete()) {
+            logWarning(s"Error deleting ${file}")
+          }
+        }
+        throw e
+    }
+
+    val length = file.length
+
+    val timeTaken = System.currentTimeMillis - startTime
+    logDebug("Block %s stored as %s file on disk in %d ms".format(
+      file.getName, Utils.bytesToString(length), timeTaken))
+
+    if (returnValues) {
+      // Return a byte buffer for the contents of the file
+      val buffer = getBytes(blockId).get
+      PutResult(length, Right(buffer))
+    } else {
+      PutResult(length, null)
     }
   }
 
-  def getBytes(blockId: BlockId): ChunkedByteBuffer = {
-    val file = diskManager.getFile(blockId.name)
+  private def getBytes(file: File, offset: Long, length: Long): Option[ByteBuffer] = {
     val channel = new RandomAccessFile(file, "r").getChannel
     Utils.tryWithSafeFinally {
       // For small files, directly read rather than memory map
-      if (file.length < minMemoryMapBytes) {
-        val buf = ByteBuffer.allocate(file.length.toInt)
-        channel.position(0)
+      if (length < minMemoryMapBytes) {
+        val buf = ByteBuffer.allocate(length.toInt)
+        channel.position(offset)
         while (buf.remaining() != 0) {
           if (channel.read(buf) == -1) {
             throw new IOException("Reached EOF before filling buffer\n" +
-              s"offset=0\nfile=${file.getAbsolutePath}\nbuf.remaining=${buf.remaining}")
+              s"offset=$offset\nfile=${file.getAbsolutePath}\nbuf.remaining=${buf.remaining}")
           }
         }
         buf.flip()
-        new ChunkedByteBuffer(buf)
+        Some(buf)
       } else {
-        new ChunkedByteBuffer(channel.map(MapMode.READ_ONLY, 0, file.length))
+        Some(channel.map(MapMode.READ_ONLY, offset, length))
       }
     } {
       channel.close()
     }
   }
 
-  def remove(blockId: BlockId): Boolean = {
+  override def getBytes(blockId: BlockId): Option[ByteBuffer] = {
+    val file = diskManager.getFile(blockId.name)
+    getBytes(file, 0, file.length)
+  }
+
+  def getBytes(segment: FileSegment): Option[ByteBuffer] = {
+    getBytes(segment.file, segment.offset, segment.length)
+  }
+
+  override def getValues(blockId: BlockId): Option[Iterator[Any]] = {
+    getBytes(blockId).map(buffer => blockManager.dataDeserialize(blockId, buffer))
+  }
+
+  override def remove(blockId: BlockId): Boolean = {
     val file = diskManager.getFile(blockId.name)
     if (file.exists()) {
       val ret = file.delete()
@@ -120,7 +157,7 @@ private[spark] class DiskStore(conf: SparkConf, diskManager: DiskBlockManager) e
     }
   }
 
-  def contains(blockId: BlockId): Boolean = {
+  override def contains(blockId: BlockId): Boolean = {
     val file = diskManager.getFile(blockId.name)
     file.exists()
   }

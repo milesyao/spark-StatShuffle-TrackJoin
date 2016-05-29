@@ -17,16 +17,16 @@
 
 package org.apache.spark.ml.feature
 
-import org.apache.spark.annotation.{Experimental, Since}
+import org.apache.spark.annotation.{Since, Experimental}
 import org.apache.spark.ml.Transformer
 import org.apache.spark.ml.attribute._
-import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared.{HasInputCol, HasOutputCol}
 import org.apache.spark.ml.util._
-import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions.{col, udf}
-import org.apache.spark.sql.types.{DoubleType, NumericType, StructType}
+import org.apache.spark.sql.types.{DoubleType, StructType}
 
 /**
  * :: Experimental ::
@@ -69,8 +69,7 @@ class OneHotEncoder(override val uid: String) extends Transformer
     val inputColName = $(inputCol)
     val outputColName = $(outputCol)
 
-    require(schema(inputColName).dataType.isInstanceOf[NumericType],
-      s"Input column must be of type NumericType but got ${schema(inputColName).dataType}")
+    SchemaUtils.checkColumnType(schema, inputColName, DoubleType)
     val inputFields = schema.fields
     require(!inputFields.exists(_.name == outputColName),
       s"Output column $outputColName already exists.")
@@ -121,8 +120,7 @@ class OneHotEncoder(override val uid: String) extends Transformer
     StructType(outputFields)
   }
 
-  @Since("2.0.0")
-  override def transform(dataset: Dataset[_]): DataFrame = {
+  override def transform(dataset: DataFrame): DataFrame = {
     // schema transformation
     val inputColName = $(inputCol)
     val outputColName = $(outputCol)
@@ -131,12 +129,10 @@ class OneHotEncoder(override val uid: String) extends Transformer
       transformSchema(dataset.schema)(outputColName))
     if (outputAttrGroup.size < 0) {
       // If the number of attributes is unknown, we check the values from the input column.
-      val numAttrs = dataset.select(col(inputColName).cast(DoubleType)).rdd.map(_.getDouble(0))
+      val numAttrs = dataset.select(col(inputColName).cast(DoubleType)).map(_.getDouble(0))
         .aggregate(0.0)(
           (m, x) => {
-            assert(x <= Int.MaxValue,
-              s"OneHotEncoder only supports up to ${Int.MaxValue} indices, but got $x")
-            assert(x >= 0.0 && x == x.toInt,
+            assert(x >=0.0 && x == x.toInt,
               s"Values from column $inputColName must be indices, but got $x.")
             math.max(m, x)
           },

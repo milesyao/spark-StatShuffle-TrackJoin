@@ -19,12 +19,12 @@ package org.apache.spark.mllib.optimization
 
 import scala.collection.mutable.ArrayBuffer
 
-import breeze.linalg.{norm, DenseVector => BDV}
+import breeze.linalg.{DenseVector => BDV, norm}
 
-import org.apache.spark.annotation.{DeveloperApi, Experimental}
-import org.apache.spark.internal.Logging
-import org.apache.spark.mllib.linalg.{Vector, Vectors}
+import org.apache.spark.annotation.{Experimental, DeveloperApi}
+import org.apache.spark.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.linalg.{Vectors, Vector}
 
 
 /**
@@ -46,8 +46,6 @@ class GradientDescent private[spark] (private var gradient: Gradient, private va
    * In subsequent steps, the step size will decrease with stepSize/sqrt(t)
    */
   def setStepSize(step: Double): this.type = {
-    require(step > 0,
-      s"Initial step size must be positive but got ${step}")
     this.stepSize = step
     this
   }
@@ -59,8 +57,6 @@ class GradientDescent private[spark] (private var gradient: Gradient, private va
    */
   @Experimental
   def setMiniBatchFraction(fraction: Double): this.type = {
-    require(fraction > 0 && fraction <= 1.0,
-      s"Fraction for mini-batch SGD must be in range (0, 1] but got ${fraction}")
     this.miniBatchFraction = fraction
     this
   }
@@ -69,8 +65,6 @@ class GradientDescent private[spark] (private var gradient: Gradient, private va
    * Set the number of iterations for SGD. Default 100.
    */
   def setNumIterations(iters: Int): this.type = {
-    require(iters >= 0,
-      s"Number of iterations must be nonnegative but got ${iters}")
     this.numIterations = iters
     this
   }
@@ -79,8 +73,6 @@ class GradientDescent private[spark] (private var gradient: Gradient, private va
    * Set the regularization parameter. Default 0.0.
    */
   def setRegParam(regParam: Double): this.type = {
-    require(regParam >= 0,
-      s"Regularization parameter must be nonnegative but got ${regParam}")
     this.regParam = regParam
     this
   }
@@ -99,8 +91,7 @@ class GradientDescent private[spark] (private var gradient: Gradient, private va
    * Must be between 0.0 and 1.0 inclusively.
    */
   def setConvergenceTol(tolerance: Double): this.type = {
-    require(tolerance >= 0.0 && tolerance <= 1.0,
-      s"Convergence tolerance must be in range [0, 1] but got ${tolerance}")
+    require(0.0 <= tolerance && tolerance <= 1.0)
     this.convergenceTol = tolerance
     this
   }

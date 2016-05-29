@@ -56,7 +56,6 @@ public class JavaBinaryClassificationMetricsExample {
     // Compute raw scores on the test set.
     JavaRDD<Tuple2<Object, Object>> predictionAndLabels = test.map(
       new Function<LabeledPoint, Tuple2<Object, Object>>() {
-        @Override
         public Tuple2<Object, Object> call(LabeledPoint p) {
           Double prediction = model.predict(p.features());
           return new Tuple2<Object, Object>(prediction, p.label());
@@ -65,32 +64,30 @@ public class JavaBinaryClassificationMetricsExample {
     );
 
     // Get evaluation metrics.
-    BinaryClassificationMetrics metrics =
-      new BinaryClassificationMetrics(predictionAndLabels.rdd());
+    BinaryClassificationMetrics metrics = new BinaryClassificationMetrics(predictionAndLabels.rdd());
 
     // Precision by threshold
     JavaRDD<Tuple2<Object, Object>> precision = metrics.precisionByThreshold().toJavaRDD();
-    System.out.println("Precision by threshold: " + precision.collect());
+    System.out.println("Precision by threshold: " + precision.toArray());
 
     // Recall by threshold
     JavaRDD<Tuple2<Object, Object>> recall = metrics.recallByThreshold().toJavaRDD();
-    System.out.println("Recall by threshold: " + recall.collect());
+    System.out.println("Recall by threshold: " + recall.toArray());
 
     // F Score by threshold
     JavaRDD<Tuple2<Object, Object>> f1Score = metrics.fMeasureByThreshold().toJavaRDD();
-    System.out.println("F1 Score by threshold: " + f1Score.collect());
+    System.out.println("F1 Score by threshold: " + f1Score.toArray());
 
     JavaRDD<Tuple2<Object, Object>> f2Score = metrics.fMeasureByThreshold(2.0).toJavaRDD();
-    System.out.println("F2 Score by threshold: " + f2Score.collect());
+    System.out.println("F2 Score by threshold: " + f2Score.toArray());
 
     // Precision-recall curve
     JavaRDD<Tuple2<Object, Object>> prc = metrics.pr().toJavaRDD();
-    System.out.println("Precision-recall curve: " + prc.collect());
+    System.out.println("Precision-recall curve: " + prc.toArray());
 
     // Thresholds
     JavaRDD<Double> thresholds = precision.map(
       new Function<Tuple2<Object, Object>, Double>() {
-        @Override
         public Double call(Tuple2<Object, Object> t) {
           return new Double(t._1().toString());
         }
@@ -99,7 +96,7 @@ public class JavaBinaryClassificationMetricsExample {
 
     // ROC Curve
     JavaRDD<Tuple2<Object, Object>> roc = metrics.roc().toJavaRDD();
-    System.out.println("ROC curve: " + roc.collect());
+    System.out.println("ROC curve: " + roc.toArray());
 
     // AUPRC
     System.out.println("Area under precision-recall curve = " + metrics.areaUnderPR());
@@ -109,7 +106,8 @@ public class JavaBinaryClassificationMetricsExample {
 
     // Save and load model
     model.save(sc, "target/tmp/LogisticRegressionModel");
-    LogisticRegressionModel.load(sc, "target/tmp/LogisticRegressionModel");
+    LogisticRegressionModel sameModel = LogisticRegressionModel.load(sc,
+      "target/tmp/LogisticRegressionModel");
     // $example off$
   }
 }

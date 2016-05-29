@@ -17,51 +17,40 @@
 
 package org.apache.spark.sql.catalyst.optimizer
 
-import org.apache.spark.sql.catalyst.SimpleCatalystConf
-import org.apache.spark.sql.catalyst.analysis.{Analyzer, EmptyFunctionRegistry}
-import org.apache.spark.sql.catalyst.catalog.{InMemoryCatalog, SessionCatalog}
-import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.dsl.plans._
+import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.PlanTest
-import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Distinct, LocalRelation, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.RuleExecutor
 
 class AggregateOptimizeSuite extends PlanTest {
-  val conf = new SimpleCatalystConf(caseSensitiveAnalysis = false)
-  val catalog = new SessionCatalog(new InMemoryCatalog, EmptyFunctionRegistry, conf)
-  val analyzer = new Analyzer(catalog, conf)
 
   object Optimize extends RuleExecutor[LogicalPlan] {
     val batches = Batch("Aggregate", FixedPoint(100),
-      FoldablePropagation,
-      RemoveLiteralFromGroupExpressions,
-      RemoveRepetitionFromGroupExpressions) :: Nil
+      ReplaceDistinctWithAggregate,
+      RemoveLiteralFromGroupExpressions) :: Nil
   }
 
-  val testRelation = LocalRelation('a.int, 'b.int, 'c.int)
+  test("replace distinct with aggregate") {
+    val input = LocalRelation('a.int, 'b.int)
+
+    val query = Distinct(input)
+    val optimized = Optimize.execute(query.analyze)
+
+    val correctAnswer = Aggregate(input.output, input.output, input)
+
+    comparePlans(optimized, correctAnswer)
+  }
 
   test("remove literals in grouping expression") {
-    val query = testRelation.groupBy('a, Literal("1"), Literal(1) + Literal(2))(sum('b))
-    val optimized = Optimize.execute(analyzer.execute(query))
-    val correctAnswer = testRelation.groupBy('a)(sum('b)).analyze
+    val input = LocalRelation('a.int, 'b.int)
 
-    comparePlans(optimized, correctAnswer)
-  }
+    val query =
+      input.groupBy('a, Literal(1), Literal(1) + Literal(2))(sum('b))
+    val optimized = Optimize.execute(query)
 
-  test("Remove aliased literals") {
-    val query = testRelation.select('a, Literal(1).as('y)).groupBy('a, 'y)(sum('b))
-    val optimized = Optimize.execute(analyzer.execute(query))
-    val correctAnswer = testRelation.select('a, Literal(1).as('y)).groupBy('a)(sum('b)).analyze
-
-    comparePlans(optimized, correctAnswer)
-  }
-
-  test("remove repetition in grouping expression") {
-    val input = LocalRelation('a.int, 'b.int, 'c.int)
-    val query = input.groupBy('a + 1, 'b + 2, Literal(1) + 'A, Literal(2) + 'B)(sum('c))
-    val optimized = Optimize.execute(analyzer.execute(query))
-    val correctAnswer = input.groupBy('a + 1, 'b + 2)(sum('c)).analyze
+    val correctAnswer = input.groupBy('a)(sum('b))
 
     comparePlans(optimized, correctAnswer)
   }

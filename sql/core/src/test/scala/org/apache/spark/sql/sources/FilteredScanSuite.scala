@@ -23,7 +23,6 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.PredicateHelper
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -32,15 +31,13 @@ class FilteredScanSource extends RelationProvider {
   override def createRelation(
       sqlContext: SQLContext,
       parameters: Map[String, String]): BaseRelation = {
-    SimpleFilteredScan(parameters("from").toInt, parameters("to").toInt)(sqlContext.sparkSession)
+    SimpleFilteredScan(parameters("from").toInt, parameters("to").toInt)(sqlContext)
   }
 }
 
-case class SimpleFilteredScan(from: Int, to: Int)(@transient val sparkSession: SparkSession)
+case class SimpleFilteredScan(from: Int, to: Int)(@transient val sqlContext: SQLContext)
   extends BaseRelation
   with PrunedFilteredScan {
-
-  override def sqlContext: SQLContext = sparkSession.sqlContext
 
   override def schema: StructType =
     StructType(
@@ -117,7 +114,7 @@ case class SimpleFilteredScan(from: Int, to: Int)(@transient val sparkSession: S
       filters.forall(translateFilterOnA(_)(a)) && filters.forall(translateFilterOnC(_)(c))
     }
 
-    sparkSession.sparkContext.parallelize(from to to).filter(eval).map(i =>
+    sqlContext.sparkContext.parallelize(from to to).filter(eval).map(i =>
       Row.fromSeq(rowBuilders.map(_(i)).reduceOption(_ ++ _).getOrElse(Seq.empty)))
   }
 }
@@ -307,38 +304,30 @@ class FilteredScanSuite extends DataSourceTest with SharedSQLContext with Predic
     expectedCount: Int,
     requiredColumnNames: Set[String],
     expectedUnhandledFilters: Set[Filter]): Unit = {
-
     test(s"PushDown Returns $expectedCount: $sqlString") {
-      // These tests check a particular plan, disable whole stage codegen.
-      caseInsensitiveContext.conf.setConf(SQLConf.WHOLESTAGE_CODEGEN_ENABLED, false)
-      try {
-        val queryExecution = sql(sqlString).queryExecution
-        val rawPlan = queryExecution.executedPlan.collect {
-          case p: execution.DataSourceScanExec => p
-        } match {
-          case Seq(p) => p
-          case _ => fail(s"More than one PhysicalRDD found\n$queryExecution")
-        }
-        val rawCount = rawPlan.execute().count()
-        assert(ColumnsRequired.set === requiredColumnNames)
+      val queryExecution = sql(sqlString).queryExecution
+      val rawPlan = queryExecution.executedPlan.collect {
+        case p: execution.PhysicalRDD => p
+      } match {
+        case Seq(p) => p
+        case _ => fail(s"More than one PhysicalRDD found\n$queryExecution")
+      }
+      val rawCount = rawPlan.execute().count()
+      assert(ColumnsRequired.set === requiredColumnNames)
 
-        val table = caseInsensitiveContext.table("oneToTenFiltered")
-        val relation = table.queryExecution.logical.collectFirst {
-          case LogicalRelation(r, _, _) => r
-        }.get
+      val table = caseInsensitiveContext.table("oneToTenFiltered")
+      val relation = table.queryExecution.logical.collectFirst {
+        case LogicalRelation(r, _) => r
+      }.get
 
-        assert(
-          relation.unhandledFilters(FiltersPushed.list.toArray).toSet === expectedUnhandledFilters)
+      assert(
+        relation.unhandledFilters(FiltersPushed.list.toArray).toSet === expectedUnhandledFilters)
 
-        if (rawCount != expectedCount) {
-          fail(
-            s"Wrong # of results for pushed filter. Got $rawCount, Expected $expectedCount\n" +
-              s"Filters pushed: ${FiltersPushed.list.mkString(",")}\n" +
-              queryExecution)
-        }
-      } finally {
-        caseInsensitiveContext.conf.setConf(SQLConf.WHOLESTAGE_CODEGEN_ENABLED,
-          SQLConf.WHOLESTAGE_CODEGEN_ENABLED.defaultValue.get)
+      if (rawCount != expectedCount) {
+        fail(
+          s"Wrong # of results for pushed filter. Got $rawCount, Expected $expectedCount\n" +
+            s"Filters pushed: ${FiltersPushed.list.mkString(",")}\n" +
+            queryExecution)
       }
     }
   }

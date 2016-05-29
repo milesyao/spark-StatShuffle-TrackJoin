@@ -19,34 +19,36 @@ package org.apache.spark.examples.ml;
 
 // $example on$
 import java.util.Arrays;
-import java.util.List;
 
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.ml.feature.CountVectorizer;
 import org.apache.spark.ml.feature.CountVectorizerModel;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.types.*;
 // $example off$
 
 public class JavaCountVectorizerExample {
   public static void main(String[] args) {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaCountVectorizerExample")
-      .getOrCreate();
+
+    SparkConf conf = new SparkConf().setAppName("JavaCountVectorizerExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext sqlContext = new SQLContext(jsc);
 
     // $example on$
     // Input data: Each row is a bag of words from a sentence or document.
-    List<Row> data = Arrays.asList(
+    JavaRDD<Row> jrdd = jsc.parallelize(Arrays.asList(
       RowFactory.create(Arrays.asList("a", "b", "c")),
       RowFactory.create(Arrays.asList("a", "b", "b", "c", "a"))
-    );
+    ));
     StructType schema = new StructType(new StructField [] {
       new StructField("text", new ArrayType(DataTypes.StringType, true), false, Metadata.empty())
     });
-    Dataset<Row> df = spark.createDataFrame(data, schema);
+    DataFrame df = sqlContext.createDataFrame(jrdd, schema);
 
     // fit a CountVectorizerModel from the corpus
     CountVectorizerModel cvModel = new CountVectorizer()
@@ -63,7 +65,5 @@ public class JavaCountVectorizerExample {
 
     cvModel.transform(df).show();
     // $example off$
-
-    spark.stop();
   }
 }

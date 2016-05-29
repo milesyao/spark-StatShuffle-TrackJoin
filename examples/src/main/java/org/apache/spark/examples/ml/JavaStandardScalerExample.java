@@ -17,25 +17,24 @@
 
 package org.apache.spark.examples.ml;
 
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.SQLContext;
 
 // $example on$
 import org.apache.spark.ml.feature.StandardScaler;
 import org.apache.spark.ml.feature.StandardScalerModel;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
+import org.apache.spark.sql.DataFrame;
 // $example off$
 
 public class JavaStandardScalerExample {
   public static void main(String[] args) {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaStandardScalerExample")
-      .getOrCreate();
+    SparkConf conf = new SparkConf().setAppName("JavaStandardScalerExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext jsql = new SQLContext(jsc);
 
     // $example on$
-    Dataset<Row> dataFrame =
-      spark.read().format("libsvm").load("data/mllib/sample_libsvm_data.txt");
+    DataFrame dataFrame = jsql.read().format("libsvm").load("data/mllib/sample_libsvm_data.txt");
 
     StandardScaler scaler = new StandardScaler()
       .setInputCol("features")
@@ -47,9 +46,9 @@ public class JavaStandardScalerExample {
     StandardScalerModel scalerModel = scaler.fit(dataFrame);
 
     // Normalize each feature to have unit standard deviation.
-    Dataset<Row> scaledData = scalerModel.transform(dataFrame);
+    DataFrame scaledData = scalerModel.transform(dataFrame);
     scaledData.show();
     // $example off$
-    spark.stop();
+    jsc.stop();
   }
 }

@@ -40,14 +40,14 @@ abstract class HiveQueryFileTest extends HiveComparisonTest {
 
   def testCases: Seq[(String, File)]
 
-  val runAll: Boolean =
+  val runAll =
     !(System.getProperty("spark.hive.alltests") == null) ||
     runOnlyDirectories.nonEmpty ||
     skipDirectories.nonEmpty
 
-  val whiteListProperty: String = "spark.hive.whitelist"
+  val whiteListProperty = "spark.hive.whitelist"
   // Allow the whiteList to be overridden by a system property
-  val realWhiteList: Seq[String] =
+  val realWhiteList =
     Option(System.getProperty(whiteListProperty)).map(_.split(",").toSeq).getOrElse(whiteList)
 
   // Go through all the test cases and add them to scala test.

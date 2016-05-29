@@ -122,9 +122,7 @@ class DataTypeSuite extends SparkFunSuite {
     val right = StructType(List())
     val merged = left.merge(right)
 
-    assert(DataType.equalsIgnoreCompatibleNullability(merged, left))
-    assert(merged("a").metadata.getBoolean(StructType.metadataKeyForOptionalField))
-    assert(merged("b").metadata.getBoolean(StructType.metadataKeyForOptionalField))
+    assert(merged === left)
   }
 
   test("merge where left is empty") {
@@ -137,9 +135,8 @@ class DataTypeSuite extends SparkFunSuite {
 
     val merged = left.merge(right)
 
-    assert(DataType.equalsIgnoreCompatibleNullability(merged, right))
-    assert(merged("a").metadata.getBoolean(StructType.metadataKeyForOptionalField))
-    assert(merged("b").metadata.getBoolean(StructType.metadataKeyForOptionalField))
+    assert(right === merged)
+
   }
 
   test("merge where both are non-empty") {
@@ -157,10 +154,7 @@ class DataTypeSuite extends SparkFunSuite {
 
     val merged = left.merge(right)
 
-    assert(DataType.equalsIgnoreCompatibleNullability(merged, expected))
-    assert(merged("a").metadata.getBoolean(StructType.metadataKeyForOptionalField))
-    assert(merged("b").metadata.getBoolean(StructType.metadataKeyForOptionalField))
-    assert(merged("c").metadata.getBoolean(StructType.metadataKeyForOptionalField))
+    assert(merged === expected)
   }
 
   test("merge where right contains type conflict") {
@@ -248,15 +242,15 @@ class DataTypeSuite extends SparkFunSuite {
   checkDefaultSize(LongType, 8)
   checkDefaultSize(FloatType, 4)
   checkDefaultSize(DoubleType, 8)
-  checkDefaultSize(DecimalType(10, 5), 8)
-  checkDefaultSize(DecimalType.SYSTEM_DEFAULT, 16)
+  checkDefaultSize(DecimalType(10, 5), 4096)
+  checkDefaultSize(DecimalType.SYSTEM_DEFAULT, 4096)
   checkDefaultSize(DateType, 4)
   checkDefaultSize(TimestampType, 8)
-  checkDefaultSize(StringType, 20)
-  checkDefaultSize(BinaryType, 100)
+  checkDefaultSize(StringType, 4096)
+  checkDefaultSize(BinaryType, 4096)
   checkDefaultSize(ArrayType(DoubleType, true), 800)
-  checkDefaultSize(ArrayType(StringType, false), 2000)
-  checkDefaultSize(MapType(IntegerType, StringType, true), 2400)
+  checkDefaultSize(ArrayType(StringType, false), 409600)
+  checkDefaultSize(MapType(IntegerType, StringType, true), 410000)
   checkDefaultSize(MapType(IntegerType, ArrayType(DoubleType), false), 80400)
   checkDefaultSize(structType, 812)
 

@@ -17,7 +17,8 @@
 
 package org.apache.spark.graphx
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.{SparkContext, SparkFunSuite}
+import org.apache.spark.rdd._
 
 class PregelSuite extends SparkFunSuite with LocalSparkContext {
 

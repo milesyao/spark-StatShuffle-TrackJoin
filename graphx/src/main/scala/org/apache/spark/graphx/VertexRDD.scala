@@ -20,12 +20,14 @@ package org.apache.spark.graphx
 import scala.reflect.ClassTag
 
 import org.apache.spark._
+import org.apache.spark.SparkContext._
+import org.apache.spark.rdd._
+import org.apache.spark.storage.StorageLevel
+
 import org.apache.spark.graphx.impl.RoutingTablePartition
 import org.apache.spark.graphx.impl.ShippableVertexPartition
 import org.apache.spark.graphx.impl.VertexAttributeBlock
 import org.apache.spark.graphx.impl.VertexRDDImpl
-import org.apache.spark.rdd._
-import org.apache.spark.storage.StorageLevel
 
 /**
  * Extends `RDD[(VertexId, VD)]` by ensuring that there is only one entry for each vertex and by
@@ -275,7 +277,7 @@ object VertexRDD {
   def apply[VD: ClassTag](vertices: RDD[(VertexId, VD)]): VertexRDD[VD] = {
     val vPartitioned: RDD[(VertexId, VD)] = vertices.partitioner match {
       case Some(p) => vertices
-      case None => vertices.partitionBy(new HashPartitioner(vertices.partitions.length))
+      case None => vertices.partitionBy(new HashPartitioner(vertices.partitions.size))
     }
     val vertexPartitions = vPartitioned.mapPartitions(
       iter => Iterator(ShippableVertexPartition(iter)),
@@ -316,7 +318,7 @@ object VertexRDD {
     ): VertexRDD[VD] = {
     val vPartitioned: RDD[(VertexId, VD)] = vertices.partitioner match {
       case Some(p) => vertices
-      case None => vertices.partitionBy(new HashPartitioner(vertices.partitions.length))
+      case None => vertices.partitionBy(new HashPartitioner(vertices.partitions.size))
     }
     val routingTables = createRoutingTables(edges, vPartitioned.partitioner.get)
     val vertexPartitions = vPartitioned.zipPartitions(routingTables, preservesPartitioning = true) {
@@ -357,7 +359,7 @@ object VertexRDD {
       Function.tupled(RoutingTablePartition.edgePartitionToMsgs)))
       .setName("VertexRDD.createRoutingTables - vid2pid (aggregation)")
 
-    val numEdgePartitions = edges.partitions.length
+    val numEdgePartitions = edges.partitions.size
     vid2pid.partitionBy(vertexPartitioner).mapPartitions(
       iter => Iterator(RoutingTablePartition.fromMsgs(numEdgePartitions, iter)),
       preservesPartitioning = true)

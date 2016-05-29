@@ -17,21 +17,20 @@
 package org.apache.spark.streaming.util
 
 import java.nio.ByteBuffer
+import java.util.concurrent.{RejectedExecutionException, ThreadPoolExecutor}
 import java.util.{Iterator => JIterator}
-import java.util.concurrent.RejectedExecutionException
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.parallel.ExecutionContextTaskSupport
+import scala.collection.parallel.ThreadPoolTaskSupport
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.language.postfixOps
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkConf
-import org.apache.spark.internal.Logging
 import org.apache.spark.util.{CompletionIterator, ThreadUtils}
+import org.apache.spark.{Logging, SparkConf}
 
 /**
  * This class manages write ahead log files.
@@ -58,18 +57,12 @@ private[streaming] class FileBasedWriteAheadLog(
   import FileBasedWriteAheadLog._
 
   private val pastLogs = new ArrayBuffer[LogInfo]
-  private val callerName = getCallerName
+  private val callerNameTag = getCallerName.map(c => s" for $c").getOrElse("")
 
-  private val threadpoolName = {
-    "WriteAheadLogManager" + callerName.map(c => s" for $c").getOrElse("")
-  }
-  private val forkJoinPool = ThreadUtils.newForkJoinPool(threadpoolName, 20)
-  private val executionContext = ExecutionContext.fromExecutorService(forkJoinPool)
-
-  override protected def logName = {
-    getClass.getName.stripSuffix("$") +
-      callerName.map("_" + _).getOrElse("").replaceAll("[ ]", "_")
-  }
+  private val threadpoolName = s"WriteAheadLogManager $callerNameTag"
+  private val threadpool = ThreadUtils.newDaemonCachedThreadPool(threadpoolName, 20)
+  private val executionContext = ExecutionContext.fromExecutorService(threadpool)
+  override protected val logName = s"WriteAheadLogManager $callerNameTag"
 
   private var currentLogPath: Option[String] = None
   private var currentLogWriter: FileBasedWriteAheadLogWriter = null
@@ -145,7 +138,7 @@ private[streaming] class FileBasedWriteAheadLog(
     } else {
       // For performance gains, it makes sense to parallelize the recovery if
       // closeFileAfterWrite = true
-      seqToParIterator(executionContext, logFilesToRead, readFile).asJava
+      seqToParIterator(threadpool, logFilesToRead, readFile).asJava
     }
   }
 
@@ -231,8 +224,7 @@ private[streaming] class FileBasedWriteAheadLog(
     val logDirectoryPath = new Path(logDirectory)
     val fileSystem = HdfsUtils.getFileSystemForPath(logDirectoryPath, hadoopConf)
 
-    if (fileSystem.exists(logDirectoryPath) &&
-        fileSystem.getFileStatus(logDirectoryPath).isDirectory) {
+    if (fileSystem.exists(logDirectoryPath) && fileSystem.getFileStatus(logDirectoryPath).isDir) {
       val logFileInfo = logFilesTologInfo(fileSystem.listStatus(logDirectoryPath).map { _.getPath })
       pastLogs.clear()
       pastLogs ++= logFileInfo
@@ -260,12 +252,8 @@ private[streaming] object FileBasedWriteAheadLog {
   }
 
   def getCallerName(): Option[String] = {
-    val blacklist = Seq("WriteAheadLog", "Logging", "java.lang", "scala.")
-    Thread.currentThread.getStackTrace()
-      .map(_.getClassName)
-      .find { c => !blacklist.exists(c.contains) }
-      .flatMap(_.split("\\.").lastOption)
-      .flatMap(_.split("\\$\\$").headOption)
+    val stackTraceClasses = Thread.currentThread.getStackTrace().map(_.getClassName)
+    stackTraceClasses.find(!_.contains("WriteAheadLog")).flatMap(_.split("\\.").lastOption)
   }
 
   /** Convert a sequence of files to a sequence of sorted LogInfo objects */
@@ -284,17 +272,16 @@ private[streaming] object FileBasedWriteAheadLog {
 
   /**
    * This creates an iterator from a parallel collection, by keeping at most `n` objects in memory
-   * at any given time, where `n` is at most the max of the size of the thread pool or 8. This is
-   * crucial for use cases where we create `FileBasedWriteAheadLogReader`s during parallel recovery.
-   * We don't want to open up `k` streams altogether where `k` is the size of the Seq that we want
-   * to parallelize.
+   * at any given time, where `n` is the size of the thread pool. This is crucial for use cases
+   * where we create `FileBasedWriteAheadLogReader`s during parallel recovery. We don't want to
+   * open up `k` streams altogether where `k` is the size of the Seq that we want to parallelize.
    */
   def seqToParIterator[I, O](
-      executionContext: ExecutionContext,
+      tpool: ThreadPoolExecutor,
       source: Seq[I],
       handler: I => Iterator[O]): Iterator[O] = {
-    val taskSupport = new ExecutionContextTaskSupport(executionContext)
-    val groupSize = taskSupport.parallelismLevel.max(8)
+    val taskSupport = new ThreadPoolTaskSupport(tpool)
+    val groupSize = tpool.getMaximumPoolSize.max(8)
     source.grouped(groupSize).flatMap { group =>
       val parallelCollection = group.par
       parallelCollection.tasksupport = taskSupport

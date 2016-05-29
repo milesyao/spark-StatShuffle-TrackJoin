@@ -18,22 +18,27 @@
 package org.apache.spark.sql.catalyst.analysis
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.SimpleCatalystConf
-import org.apache.spark.sql.catalyst.catalog.{InMemoryCatalog, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.{TableIdentifier, SimpleCatalystConf}
 
 trait AnalysisTest extends PlanTest {
 
-  protected val caseSensitiveAnalyzer = makeAnalyzer(caseSensitive = true)
-  protected val caseInsensitiveAnalyzer = makeAnalyzer(caseSensitive = false)
+  val (caseSensitiveAnalyzer, caseInsensitiveAnalyzer) = {
+    val caseSensitiveConf = new SimpleCatalystConf(true)
+    val caseInsensitiveConf = new SimpleCatalystConf(false)
 
-  private def makeAnalyzer(caseSensitive: Boolean): Analyzer = {
-    val conf = new SimpleCatalystConf(caseSensitive)
-    val catalog = new SessionCatalog(new InMemoryCatalog, EmptyFunctionRegistry, conf)
-    catalog.createTempView("TaBlE", TestRelations.testRelation, overrideIfExists = true)
-    new Analyzer(catalog, conf) {
-      override val extendedResolutionRules = EliminateSubqueryAliases :: Nil
+    val caseSensitiveCatalog = new SimpleCatalog(caseSensitiveConf)
+    val caseInsensitiveCatalog = new SimpleCatalog(caseInsensitiveConf)
+
+    caseSensitiveCatalog.registerTable(TableIdentifier("TaBlE"), TestRelations.testRelation)
+    caseInsensitiveCatalog.registerTable(TableIdentifier("TaBlE"), TestRelations.testRelation)
+
+    new Analyzer(caseSensitiveCatalog, EmptyFunctionRegistry, caseSensitiveConf) {
+      override val extendedResolutionRules = EliminateSubQueries :: Nil
+    } ->
+    new Analyzer(caseInsensitiveCatalog, EmptyFunctionRegistry, caseInsensitiveConf) {
+      override val extendedResolutionRules = EliminateSubQueries :: Nil
     }
   }
 
@@ -55,18 +60,7 @@ trait AnalysisTest extends PlanTest {
       inputPlan: LogicalPlan,
       caseSensitive: Boolean = true): Unit = {
     val analyzer = getAnalyzer(caseSensitive)
-    val analysisAttempt = analyzer.execute(inputPlan)
-    try analyzer.checkAnalysis(analysisAttempt) catch {
-      case a: AnalysisException =>
-        fail(
-          s"""
-            |Failed to Analyze Plan
-            |$inputPlan
-            |
-            |Partial Analysis
-            |$analysisAttempt
-          """.stripMargin, a)
-    }
+    analyzer.checkAnalysis(analyzer.execute(inputPlan))
   }
 
   protected def assertAnalysisError(
@@ -77,17 +71,8 @@ trait AnalysisTest extends PlanTest {
     val e = intercept[AnalysisException] {
       analyzer.checkAnalysis(analyzer.execute(inputPlan))
     }
-
-    if (!expectedErrors.map(_.toLowerCase).forall(e.getMessage.toLowerCase.contains)) {
-      fail(
-        s"""Exception message should contain the following substrings:
-           |
-           |  ${expectedErrors.mkString("\n  ")}
-           |
-           |Actual exception message:
-           |
-           |  ${e.getMessage}
-         """.stripMargin)
-    }
+    assert(expectedErrors.map(_.toLowerCase).forall(e.getMessage.toLowerCase.contains),
+      s"Expected to throw Exception contains: ${expectedErrors.mkString(", ")}, " +
+        s"actually we get ${e.getMessage}")
   }
 }

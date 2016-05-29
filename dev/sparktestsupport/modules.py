@@ -15,14 +15,12 @@
 # limitations under the License.
 #
 
-from functools import total_ordering
 import itertools
 import re
 
 all_modules = []
 
 
-@total_ordering
 class Module(object):
     """
     A module is the basic abstraction in our test runner script. Each module consists of a set of
@@ -77,63 +75,20 @@ class Module(object):
     def contains_file(self, filename):
         return any(re.match(p, filename) for p in self.source_file_prefixes)
 
-    def __repr__(self):
-        return "Module<%s>" % self.name
-
-    def __lt__(self, other):
-        return self.name < other.name
-
-    def __eq__(self, other):
-        return self.name == other.name
-
-    def __ne__(self, other):
-        return not (self.name == other.name)
-
-    def __hash__(self):
-        return hash(self.name)
-
-tags = Module(
-    name="tags",
-    dependencies=[],
-    source_file_regexes=[
-        "common/tags/",
-    ]
-)
-
-catalyst = Module(
-    name="catalyst",
-    dependencies=[tags],
-    source_file_regexes=[
-        "sql/catalyst/",
-    ],
-    sbt_test_goals=[
-        "catalyst/test",
-    ],
-)
-
 
 sql = Module(
     name="sql",
-    dependencies=[catalyst],
+    dependencies=[],
     source_file_regexes=[
-        "sql/core/",
-    ],
-    sbt_test_goals=[
-        "sql/test",
-    ],
-)
-
-hive = Module(
-    name="hive",
-    dependencies=[sql],
-    source_file_regexes=[
-        "sql/hive/",
+        "sql/(?!hive-thriftserver)",
         "bin/spark-sql",
     ],
     build_profile_flags=[
         "-Phive",
     ],
     sbt_test_goals=[
+        "catalyst/test",
+        "sql/test",
         "hive/test",
     ],
     test_tags=[
@@ -144,7 +99,7 @@ hive = Module(
 
 hive_thriftserver = Module(
     name="hive-thriftserver",
-    dependencies=[hive],
+    dependencies=[sql],
     source_file_regexes=[
         "sql/hive-thriftserver",
         "sbin/start-thriftserver.sh",
@@ -158,21 +113,9 @@ hive_thriftserver = Module(
 )
 
 
-sketch = Module(
-    name="sketch",
-    dependencies=[tags],
-    source_file_regexes=[
-        "common/sketch/",
-    ],
-    sbt_test_goals=[
-        "sketch/test"
-    ]
-)
-
-
 graphx = Module(
     name="graphx",
-    dependencies=[tags],
+    dependencies=[],
     source_file_regexes=[
         "graphx/",
     ],
@@ -184,7 +127,7 @@ graphx = Module(
 
 streaming = Module(
     name="streaming",
-    dependencies=[tags],
+    dependencies=[],
     source_file_regexes=[
         "streaming",
     ],
@@ -200,10 +143,10 @@ streaming = Module(
 # fail other PRs.
 streaming_kinesis_asl = Module(
     name="streaming-kinesis-asl",
-    dependencies=[tags],
+    dependencies=[],
     source_file_regexes=[
-        "external/kinesis-asl/",
-        "external/kinesis-asl-assembly/",
+        "extras/kinesis-asl/",
+        "extras/kinesis-asl-assembly/",
     ],
     build_profile_flags=[
         "-Pkinesis-asl",
@@ -217,15 +160,52 @@ streaming_kinesis_asl = Module(
 )
 
 
-streaming_kafka = Module(
-    name="streaming-kafka-0-8",
+streaming_zeromq = Module(
+    name="streaming-zeromq",
     dependencies=[streaming],
     source_file_regexes=[
-        "external/kafka-0-8",
-        "external/kafka-0-8-assembly",
+        "external/zeromq",
     ],
     sbt_test_goals=[
-        "streaming-kafka-0-8/test",
+        "streaming-zeromq/test",
+    ]
+)
+
+
+streaming_twitter = Module(
+    name="streaming-twitter",
+    dependencies=[streaming],
+    source_file_regexes=[
+        "external/twitter",
+    ],
+    sbt_test_goals=[
+        "streaming-twitter/test",
+    ]
+)
+
+
+streaming_mqtt = Module(
+    name="streaming-mqtt",
+    dependencies=[streaming],
+    source_file_regexes=[
+        "external/mqtt",
+        "external/mqtt-assembly",
+    ],
+    sbt_test_goals=[
+        "streaming-mqtt/test",
+    ]
+)
+
+
+streaming_kafka = Module(
+    name="streaming-kafka",
+    dependencies=[streaming],
+    source_file_regexes=[
+        "external/kafka",
+        "external/kafka-assembly",
+    ],
+    sbt_test_goals=[
+        "streaming-kafka/test",
     ]
 )
 
@@ -263,21 +243,9 @@ streaming_flume_assembly = Module(
 )
 
 
-mllib_local = Module(
-    name="mllib-local",
-    dependencies=[tags],
-    source_file_regexes=[
-        "mllib-local",
-    ],
-    sbt_test_goals=[
-        "mllib-local/test",
-    ]
-)
-
-
 mllib = Module(
     name="mllib",
-    dependencies=[mllib_local, streaming, sql],
+    dependencies=[streaming, sql],
     source_file_regexes=[
         "data/mllib/",
         "mllib/",
@@ -290,7 +258,7 @@ mllib = Module(
 
 examples = Module(
     name="examples",
-    dependencies=[graphx, mllib, streaming, hive],
+    dependencies=[graphx, mllib, streaming, sql],
     source_file_regexes=[
         "examples/",
     ],
@@ -322,16 +290,13 @@ pyspark_core = Module(
 
 pyspark_sql = Module(
     name="pyspark-sql",
-    dependencies=[pyspark_core, hive],
+    dependencies=[pyspark_core, sql],
     source_file_regexes=[
         "python/pyspark/sql"
     ],
     python_test_goals=[
         "pyspark.sql.types",
         "pyspark.sql.context",
-        "pyspark.sql.session",
-        "pyspark.sql.conf",
-        "pyspark.sql.catalog",
         "pyspark.sql.column",
         "pyspark.sql.dataframe",
         "pyspark.sql.group",
@@ -350,6 +315,7 @@ pyspark_streaming = Module(
         streaming,
         streaming_kafka,
         streaming_flume_assembly,
+        streaming_mqtt,
         streaming_kinesis_asl
     ],
     source_file_regexes=[
@@ -401,7 +367,6 @@ pyspark_ml = Module(
         "pyspark.ml.feature",
         "pyspark.ml.classification",
         "pyspark.ml.clustering",
-        "pyspark.ml.linalg.__init__",
         "pyspark.ml.recommendation",
         "pyspark.ml.regression",
         "pyspark.ml.tuning",
@@ -415,7 +380,7 @@ pyspark_ml = Module(
 
 sparkr = Module(
     name="sparkr",
-    dependencies=[hive, mllib],
+    dependencies=[sql, mllib],
     source_file_regexes=[
         "R/",
     ],
@@ -441,12 +406,21 @@ build = Module(
     should_run_build_tests=True
 )
 
+ec2 = Module(
+    name="ec2",
+    dependencies=[],
+    source_file_regexes=[
+        "ec2/",
+    ]
+)
+
+
 yarn = Module(
     name="yarn",
     dependencies=[],
     source_file_regexes=[
         "yarn/",
-        "common/network-yarn/",
+        "network/yarn/",
     ],
     sbt_test_goals=[
         "yarn/test",

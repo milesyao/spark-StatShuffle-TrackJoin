@@ -17,24 +17,23 @@
 
 package org.apache.spark.examples.ml;
 
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.SQLContext;
 
 // $example on$
 import org.apache.spark.ml.feature.Normalizer;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
+import org.apache.spark.sql.DataFrame;
 // $example off$
 
 public class JavaNormalizerExample {
   public static void main(String[] args) {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaNormalizerExample")
-      .getOrCreate();
+    SparkConf conf = new SparkConf().setAppName("JavaNormalizerExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext jsql = new SQLContext(jsc);
 
     // $example on$
-    Dataset<Row> dataFrame =
-      spark.read().format("libsvm").load("data/mllib/sample_libsvm_data.txt");
+    DataFrame dataFrame = jsql.read().format("libsvm").load("data/mllib/sample_libsvm_data.txt");
 
     // Normalize each Vector using $L^1$ norm.
     Normalizer normalizer = new Normalizer()
@@ -42,14 +41,14 @@ public class JavaNormalizerExample {
       .setOutputCol("normFeatures")
       .setP(1.0);
 
-    Dataset<Row> l1NormData = normalizer.transform(dataFrame);
+    DataFrame l1NormData = normalizer.transform(dataFrame);
     l1NormData.show();
 
     // Normalize each Vector using $L^\infty$ norm.
-    Dataset<Row> lInfNormData =
+    DataFrame lInfNormData =
       normalizer.transform(dataFrame, normalizer.p().w(Double.POSITIVE_INFINITY));
     lInfNormData.show();
     // $example off$
-    spark.stop();
+    jsc.stop();
   }
 }

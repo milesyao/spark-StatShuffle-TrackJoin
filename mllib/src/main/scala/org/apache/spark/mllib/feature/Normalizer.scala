@@ -55,7 +55,7 @@ class Normalizer @Since("1.1.0") (p: Double) extends VectorTransformer {
       vector match {
         case DenseVector(vs) =>
           val values = vs.clone()
-          val size = values.length
+          val size = values.size
           var i = 0
           while (i < size) {
             values(i) /= norm
@@ -64,7 +64,7 @@ class Normalizer @Since("1.1.0") (p: Double) extends VectorTransformer {
           Vectors.dense(values)
         case SparseVector(size, ids, vs) =>
           val values = vs.clone()
-          val nnz = values.length
+          val nnz = values.size
           var i = 0
           while (i < nnz) {
             values(i) /= norm

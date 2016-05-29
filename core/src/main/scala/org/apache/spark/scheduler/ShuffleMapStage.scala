@@ -22,8 +22,6 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.CallSite
 
-import scala.reflect.ClassTag
-
 /**
  * ShuffleMapStages are intermediate stages in the execution DAG that produce data for a shuffle.
  * They occur right before each shuffle operation, and might contain multiple pipelined operations
@@ -35,7 +33,7 @@ import scala.reflect.ClassTag
  * For such stages, the ActiveJobs that submitted them are tracked in `mapStageJobs`. Note that
  * there can be multiple ActiveJobs trying to compute the same shuffle map stage.
  */
-private[spark] class ShuffleMapStage[U: ClassTag, T: ClassTag](
+private[spark] class ShuffleMapStage(
     id: Int,
     rdd: RDD[_],
     numTasks: Int,
@@ -48,28 +46,6 @@ private[spark] class ShuffleMapStage[U: ClassTag, T: ClassTag](
   private[this] var _mapStageJobs: List[ActiveJob] = Nil
 
   private[this] var _numAvailableOutputs: Int = 0
-
-  var _zeroValue: U  = _
-  var _seqOp: (U, T) => U = null
-  var _combOp: (U, U) => U = null
-
-  def setAggregate(zeroValue: U, seqOp:(U, T) => U, combOp:(U, U) => U): Unit = {
-    _zeroValue = zeroValue
-    _seqOp = seqOp
-    _combOp = combOp
-  }
-
-  def getZeroValue: U = {
-    _zeroValue
-  }
-
-  def getSeqOp: (U, T) => U = {
-    _seqOp
-  }
-
-  def getCombOp: (U, U) => U = {
-    _combOp
-  }
 
   /**
    * List of [[MapStatus]] for each partition. The index of the array is the map partition id,

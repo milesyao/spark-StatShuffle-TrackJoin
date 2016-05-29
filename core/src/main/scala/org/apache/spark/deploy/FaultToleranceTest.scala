@@ -19,11 +19,10 @@ package org.apache.spark.deploy
 
 import java.io._
 import java.net.URL
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeoutException
 
 import scala.collection.mutable.ListBuffer
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.{Await, future, promise}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.language.postfixOps
@@ -32,10 +31,9 @@ import scala.sys.process._
 import org.json4s._
 import org.json4s.jackson.JsonMethods
 
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.{Logging, SparkConf, SparkContext}
 import org.apache.spark.deploy.master.RecoveryState
-import org.apache.spark.internal.Logging
-import org.apache.spark.util.{ThreadUtils, Utils}
+import org.apache.spark.util.Utils
 
 /**
  * This suite tests the fault tolerance of the Spark standalone scheduler, mainly the Master.
@@ -251,7 +249,7 @@ private object FaultToleranceTest extends App with Logging {
 
   /** This includes Client retry logic, so it may take a while if the cluster is recovering. */
   private def assertUsable() = {
-    val f = Future {
+    val f = future {
       try {
         val res = sc.parallelize(0 until 10).collect()
         assertTrue(res.toList == (0 until 10).toList)
@@ -265,7 +263,7 @@ private object FaultToleranceTest extends App with Logging {
     }
 
     // Avoid waiting indefinitely (e.g., we could register but get no executors).
-    assertTrue(ThreadUtils.awaitResult(f, 120 seconds))
+    assertTrue(Await.result(f, 120 seconds))
   }
 
   /**
@@ -285,7 +283,7 @@ private object FaultToleranceTest extends App with Logging {
         numAlive == 1 && numStandby == masters.size - 1 && numLiveApps >= 1
     }
 
-    val f = Future {
+    val f = future {
       try {
         while (!stateValid()) {
           Thread.sleep(1000)
@@ -318,7 +316,7 @@ private object FaultToleranceTest extends App with Logging {
     }
 
     try {
-      assertTrue(ThreadUtils.awaitResult(f, 120 seconds))
+      assertTrue(Await.result(f, 120 seconds))
     } catch {
       case e: TimeoutException =>
         logError("Master states: " + masters.map(_.state))
@@ -350,8 +348,7 @@ private class TestMasterInfo(val ip: String, val dockerId: DockerId, val logFile
 
   def readState() {
     try {
-      val masterStream = new InputStreamReader(
-        new URL("http://%s:8080/json".format(ip)).openStream, StandardCharsets.UTF_8)
+      val masterStream = new InputStreamReader(new URL("http://%s:8080/json".format(ip)).openStream)
       val json = JsonMethods.parse(masterStream)
 
       val workers = json \ "workers"
@@ -408,7 +405,7 @@ private object SparkDocker {
   }
 
   private def startNode(dockerCmd: ProcessBuilder) : (String, DockerId, File) = {
-    val ipPromise = Promise[String]()
+    val ipPromise = promise[String]()
     val outFile = File.createTempFile("fault-tolerance-test", "", Utils.createTempDir())
     val outStream: FileWriter = new FileWriter(outFile)
     def findIpAndLog(line: String): Unit = {
@@ -422,7 +419,7 @@ private object SparkDocker {
     }
 
     dockerCmd.run(ProcessLogger(findIpAndLog _))
-    val ip = ThreadUtils.awaitResult(ipPromise.future, 30 seconds)
+    val ip = Await.result(ipPromise.future, 30 seconds)
     val dockerId = Docker.getLastProcessId
     (ip, dockerId, outFile)
   }

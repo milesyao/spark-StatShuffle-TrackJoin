@@ -17,8 +17,6 @@
 
 package org.apache.spark.sql.catalyst.expressions
 
-import java.nio.charset.StandardCharsets
-
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
@@ -56,7 +54,7 @@ class LiteralExpressionSuite extends SparkFunSuite with ExpressionEvalHelper {
     checkEvaluation(Literal.default(FloatType), 0.0f)
     checkEvaluation(Literal.default(DoubleType), 0.0)
     checkEvaluation(Literal.default(StringType), "")
-    checkEvaluation(Literal.default(BinaryType), "".getBytes(StandardCharsets.UTF_8))
+    checkEvaluation(Literal.default(BinaryType), "".getBytes)
     checkEvaluation(Literal.default(DecimalType.USER_DEFAULT), Decimal(0))
     checkEvaluation(Literal.default(DecimalType.SYSTEM_DEFAULT), Decimal(0))
     checkEvaluation(Literal.default(DateType), DateTimeUtils.toJavaDate(0))
@@ -98,7 +96,7 @@ class LiteralExpressionSuite extends SparkFunSuite with ExpressionEvalHelper {
   test("string literals") {
     checkEvaluation(Literal(""), "")
     checkEvaluation(Literal("test"), "test")
-    checkEvaluation(Literal("\u0000"), "\u0000")
+    checkEvaluation(Literal("\0"), "\0")
   }
 
   test("sum two literals") {

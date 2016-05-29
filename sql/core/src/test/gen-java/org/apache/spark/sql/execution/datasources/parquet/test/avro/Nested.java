@@ -182,7 +182,6 @@ public class Nested extends org.apache.avro.specific.SpecificRecordBase implemen
     }
 
     @Override
-    @SuppressWarnings(value="unchecked")
     public Nested build() {
       try {
         Nested record = new Nested();

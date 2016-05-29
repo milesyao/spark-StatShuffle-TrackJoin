@@ -17,7 +17,7 @@
 
 package org.apache.spark.graphx.impl
 
-import scala.reflect.ClassTag
+import scala.reflect.{classTag, ClassTag}
 
 import org.apache.spark.graphx._
 import org.apache.spark.graphx.util.collection.GraphXPrimitiveKeyOpenHashMap
@@ -151,9 +151,9 @@ class EdgePartition[
    *         applied to each edge
    */
   def map[ED2: ClassTag](f: Edge[ED] => ED2): EdgePartition[ED2, VD] = {
-    val newData = new Array[ED2](data.length)
+    val newData = new Array[ED2](data.size)
     val edge = new Edge[ED]()
-    val size = data.length
+    val size = data.size
     var i = 0
     while (i < size) {
       edge.srcId = srcIds(i)
@@ -179,13 +179,13 @@ class EdgePartition[
    */
   def map[ED2: ClassTag](iter: Iterator[ED2]): EdgePartition[ED2, VD] = {
     // Faster than iter.toArray, because the expected size is known.
-    val newData = new Array[ED2](data.length)
+    val newData = new Array[ED2](data.size)
     var i = 0
     while (iter.hasNext) {
       newData(i) = iter.next()
       i += 1
     }
-    assert(newData.length == i)
+    assert(newData.size == i)
     this.withData(newData)
   }
 
@@ -311,7 +311,7 @@ class EdgePartition[
    *
    * @return size of the partition
    */
-  val size: Int = localSrcIds.length
+  val size: Int = localSrcIds.size
 
   /** The number of unique source vertices in the partition. */
   def indexSize: Int = index.size

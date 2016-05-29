@@ -17,19 +17,18 @@
 
 from __future__ import print_function
 
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
 # $example on$
 from pyspark.ml.feature import RFormula
 # $example off$
-from pyspark.sql import SparkSession
 
 if __name__ == "__main__":
-    spark = SparkSession\
-        .builder\
-        .appName("RFormulaExample")\
-        .getOrCreate()
+    sc = SparkContext(appName="RFormulaExample")
+    sqlContext = SQLContext(sc)
 
     # $example on$
-    dataset = spark.createDataFrame(
+    dataset = sqlContext.createDataFrame(
         [(7, "US", 18, 1.0),
          (8, "CA", 12, 0.0),
          (9, "NZ", 15, 0.0)],
@@ -42,4 +41,4 @@ if __name__ == "__main__":
     output.select("features", "label").show()
     # $example off$
 
-    spark.stop()
+    sc.stop()

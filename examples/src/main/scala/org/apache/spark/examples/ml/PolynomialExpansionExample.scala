@@ -20,16 +20,16 @@ package org.apache.spark.examples.ml
 
 // $example on$
 import org.apache.spark.ml.feature.PolynomialExpansion
-import org.apache.spark.ml.linalg.Vectors
+import org.apache.spark.mllib.linalg.Vectors
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object PolynomialExpansionExample {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("PolynomialExpansionExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("PolynomialExpansionExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
     val data = Array(
@@ -37,7 +37,7 @@ object PolynomialExpansionExample {
       Vectors.dense(0.0, 0.0),
       Vectors.dense(0.6, -1.1)
     )
-    val df = spark.createDataFrame(data.map(Tuple1.apply)).toDF("features")
+    val df = sqlContext.createDataFrame(data.map(Tuple1.apply)).toDF("features")
     val polynomialExpansion = new PolynomialExpansion()
       .setInputCol("features")
       .setOutputCol("polyFeatures")
@@ -45,8 +45,7 @@ object PolynomialExpansionExample {
     val polyDF = polynomialExpansion.transform(df)
     polyDF.select("polyFeatures").take(3).foreach(println)
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

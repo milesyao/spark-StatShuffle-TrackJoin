@@ -17,6 +17,7 @@
 
 package org.apache.spark.examples.streaming;
 
+import com.google.common.collect.Lists;
 import com.google.common.io.Closeables;
 
 import org.apache.spark.SparkConf;
@@ -36,9 +37,6 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.ConnectException;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.Iterator;
 import java.util.regex.Pattern;
 
 /**
@@ -58,7 +56,7 @@ import java.util.regex.Pattern;
 public class JavaCustomReceiver extends Receiver<String> {
   private static final Pattern SPACE = Pattern.compile(" ");
 
-  public static void main(String[] args) throws Exception {
+  public static void main(String[] args) {
     if (args.length < 2) {
       System.err.println("Usage: JavaCustomReceiver <hostname> <port>");
       System.exit(1);
@@ -76,14 +74,14 @@ public class JavaCustomReceiver extends Receiver<String> {
       new JavaCustomReceiver(args[0], Integer.parseInt(args[1])));
     JavaDStream<String> words = lines.flatMap(new FlatMapFunction<String, String>() {
       @Override
-      public Iterator<String> call(String x) {
-        return Arrays.asList(SPACE.split(x)).iterator();
+      public Iterable<String> call(String x) {
+        return Lists.newArrayList(SPACE.split(x));
       }
     });
     JavaPairDStream<String, Integer> wordCounts = words.mapToPair(
       new PairFunction<String, String, Integer>() {
         @Override public Tuple2<String, Integer> call(String s) {
-          return new Tuple2<>(s, 1);
+          return new Tuple2<String, Integer>(s, 1);
         }
       }).reduceByKey(new Function2<Integer, Integer, Integer>() {
         @Override
@@ -131,8 +129,7 @@ public class JavaCustomReceiver extends Receiver<String> {
       try {
         // connect to the server
         socket = new Socket(host, port);
-        reader = new BufferedReader(
-            new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
         // Until stopped or connection broken continue reading
         while (!isStopped() && (userInput = reader.readLine()) != null) {
           System.out.println("Received data '" + userInput + "'");

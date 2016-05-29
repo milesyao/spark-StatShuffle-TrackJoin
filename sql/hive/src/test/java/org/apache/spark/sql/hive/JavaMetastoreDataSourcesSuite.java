@@ -33,10 +33,9 @@ import org.junit.Test;
 
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.QueryTest$;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.hive.test.TestHive$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -47,14 +46,15 @@ import org.apache.spark.util.Utils;
 
 public class JavaMetastoreDataSourcesSuite {
   private transient JavaSparkContext sc;
-  private transient SQLContext sqlContext;
+  private transient HiveContext sqlContext;
 
+  String originalDefaultSource;
   File path;
   Path hiveManagedPath;
   FileSystem fs;
-  Dataset<Row> df;
+  DataFrame df;
 
-  private static void checkAnswer(Dataset<Row> actual, List<Row> expected) {
+  private static void checkAnswer(DataFrame actual, List<Row> expected) {
     String errorMessage = QueryTest$.MODULE$.checkAnswer(actual, expected);
     if (errorMessage != null) {
       Assert.fail(errorMessage);
@@ -66,14 +66,14 @@ public class JavaMetastoreDataSourcesSuite {
     sqlContext = TestHive$.MODULE$;
     sc = new JavaSparkContext(sqlContext.sparkContext());
 
+    originalDefaultSource = sqlContext.conf().defaultDataSourceName();
     path =
       Utils.createTempDir(System.getProperty("java.io.tmpdir"), "datasource").getCanonicalFile();
     if (path.exists()) {
       path.delete();
     }
-    HiveSessionCatalog catalog = (HiveSessionCatalog) sqlContext.sessionState().catalog();
-    hiveManagedPath = new Path(
-      catalog.hiveDefaultTableFilePath(new TableIdentifier("javaSavedTable")));
+    hiveManagedPath = new Path(sqlContext.catalog().hiveDefaultTableFilePath(
+      new TableIdentifier("javaSavedTable")));
     fs = hiveManagedPath.getFileSystem(sc.hadoopConfiguration());
     if (fs.exists(hiveManagedPath)){
       fs.delete(hiveManagedPath, true);
@@ -85,7 +85,7 @@ public class JavaMetastoreDataSourcesSuite {
     }
     JavaRDD<String> rdd = sc.parallelize(jsonObjects);
     df = sqlContext.read().json(rdd);
-    df.createOrReplaceTempView("jsonTable");
+    df.registerTempTable("jsonTable");
   }
 
   @After
@@ -111,7 +111,7 @@ public class JavaMetastoreDataSourcesSuite {
       sqlContext.sql("SELECT * FROM javaSavedTable"),
       df.collectAsList());
 
-    Dataset<Row> loadedDF =
+    DataFrame loadedDF =
       sqlContext.createExternalTable("externalTable", "org.apache.spark.sql.json", options);
 
     checkAnswer(loadedDF, df.collectAsList());
@@ -137,7 +137,7 @@ public class JavaMetastoreDataSourcesSuite {
     List<StructField> fields = new ArrayList<>();
     fields.add(DataTypes.createStructField("b", DataTypes.StringType, true));
     StructType schema = DataTypes.createStructType(fields);
-    Dataset<Row> loadedDF =
+    DataFrame loadedDF =
       sqlContext.createExternalTable("externalTable", "org.apache.spark.sql.json", schema, options);
 
     checkAnswer(

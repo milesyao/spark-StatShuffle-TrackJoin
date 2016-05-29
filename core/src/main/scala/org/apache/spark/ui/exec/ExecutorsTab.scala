@@ -19,7 +19,7 @@ package org.apache.spark.ui.exec
 
 import scala.collection.mutable.HashMap
 
-import org.apache.spark.{ExceptionFailure, Resubmitted, SparkConf, SparkContext}
+import org.apache.spark.{Resubmitted, ExceptionFailure, SparkContext}
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.scheduler._
 import org.apache.spark.storage.{StorageStatus, StorageStatusListener}
@@ -43,15 +43,11 @@ private[ui] class ExecutorsTab(parent: SparkUI) extends SparkUITab(parent, "exec
  * A SparkListener that prepares information to be displayed on the ExecutorsTab
  */
 @DeveloperApi
-class ExecutorsListener(storageStatusListener: StorageStatusListener, conf: SparkConf)
-    extends SparkListener {
-  val executorToTotalCores = HashMap[String, Int]()
-  val executorToTasksMax = HashMap[String, Int]()
+class ExecutorsListener(storageStatusListener: StorageStatusListener) extends SparkListener {
   val executorToTasksActive = HashMap[String, Int]()
   val executorToTasksComplete = HashMap[String, Int]()
   val executorToTasksFailed = HashMap[String, Int]()
   val executorToDuration = HashMap[String, Long]()
-  val executorToJvmGCTime = HashMap[String, Long]()
   val executorToInputBytes = HashMap[String, Long]()
   val executorToInputRecords = HashMap[String, Long]()
   val executorToOutputBytes = HashMap[String, Long]()
@@ -61,16 +57,12 @@ class ExecutorsListener(storageStatusListener: StorageStatusListener, conf: Spar
   val executorToLogUrls = HashMap[String, Map[String, String]]()
   val executorIdToData = HashMap[String, ExecutorUIData]()
 
-  def activeStorageStatusList: Seq[StorageStatus] = storageStatusListener.storageStatusList
-
-  def deadStorageStatusList: Seq[StorageStatus] = storageStatusListener.deadStorageStatusList
+  def storageStatusList: Seq[StorageStatus] = storageStatusListener.storageStatusList
 
   override def onExecutorAdded(executorAdded: SparkListenerExecutorAdded): Unit = synchronized {
     val eid = executorAdded.executorId
     executorToLogUrls(eid) = executorAdded.executorInfo.logUrlMap
-    executorToTotalCores(eid) = executorAdded.executorInfo.totalCores
-    executorToTasksMax(eid) = executorToTotalCores(eid) / conf.getInt("spark.task.cpus", 1)
-    executorIdToData(eid) = new ExecutorUIData(executorAdded.time)
+    executorIdToData(eid) = ExecutorUIData(executorAdded.time)
   }
 
   override def onExecutorRemoved(
@@ -83,7 +75,7 @@ class ExecutorsListener(storageStatusListener: StorageStatusListener, conf: Spar
 
   override def onApplicationStart(applicationStart: SparkListenerApplicationStart): Unit = {
     applicationStart.driverLogs.foreach { logs =>
-      val storageStatus = activeStorageStatusList.find { s =>
+      val storageStatus = storageStatusList.find { s =>
         s.blockManagerId.executorId == SparkContext.LEGACY_DRIVER_IDENTIFIER ||
         s.blockManagerId.executorId == SparkContext.DRIVER_IDENTIFIER
       }
@@ -119,20 +111,26 @@ class ExecutorsListener(storageStatusListener: StorageStatusListener, conf: Spar
       // Update shuffle read/write
       val metrics = taskEnd.taskMetrics
       if (metrics != null) {
-        executorToInputBytes(eid) =
-          executorToInputBytes.getOrElse(eid, 0L) + metrics.inputMetrics.bytesRead
-        executorToInputRecords(eid) =
-          executorToInputRecords.getOrElse(eid, 0L) + metrics.inputMetrics.recordsRead
-        executorToOutputBytes(eid) =
-          executorToOutputBytes.getOrElse(eid, 0L) + metrics.outputMetrics.bytesWritten
-        executorToOutputRecords(eid) =
-          executorToOutputRecords.getOrElse(eid, 0L) + metrics.outputMetrics.recordsWritten
-
-        executorToShuffleRead(eid) =
-          executorToShuffleRead.getOrElse(eid, 0L) + metrics.shuffleReadMetrics.remoteBytesRead
-        executorToShuffleWrite(eid) =
-          executorToShuffleWrite.getOrElse(eid, 0L) + metrics.shuffleWriteMetrics.bytesWritten
-        executorToJvmGCTime(eid) = executorToJvmGCTime.getOrElse(eid, 0L) + metrics.jvmGCTime
+        metrics.inputMetrics.foreach { inputMetrics =>
+          executorToInputBytes(eid) =
+            executorToInputBytes.getOrElse(eid, 0L) + inputMetrics.bytesRead
+          executorToInputRecords(eid) =
+            executorToInputRecords.getOrElse(eid, 0L) + inputMetrics.recordsRead
+        }
+        metrics.outputMetrics.foreach { outputMetrics =>
+          executorToOutputBytes(eid) =
+            executorToOutputBytes.getOrElse(eid, 0L) + outputMetrics.bytesWritten
+          executorToOutputRecords(eid) =
+            executorToOutputRecords.getOrElse(eid, 0L) + outputMetrics.recordsWritten
+        }
+        metrics.shuffleReadMetrics.foreach { shuffleRead =>
+          executorToShuffleRead(eid) =
+            executorToShuffleRead.getOrElse(eid, 0L) + shuffleRead.remoteBytesRead
+        }
+        metrics.shuffleWriteMetrics.foreach { shuffleWrite =>
+          executorToShuffleWrite(eid) =
+            executorToShuffleWrite.getOrElse(eid, 0L) + shuffleWrite.shuffleBytesWritten
+        }
       }
     }
   }

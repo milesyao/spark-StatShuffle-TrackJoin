@@ -18,29 +18,25 @@
 // scalastyle:off println
 package org.apache.spark.examples.ml
 
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkContext, SparkConf}
 // $example on$
-import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.ml.regression.AFTSurvivalRegression
+import org.apache.spark.mllib.linalg.Vectors
 // $example off$
-import org.apache.spark.sql.SparkSession
 
 /**
- * An example demonstrating AFTSurvivalRegression.
- * Run with
- * {{{
- * bin/run-example ml.AFTSurvivalRegressionExample
- * }}}
+ * An example for AFTSurvivalRegression.
  */
 object AFTSurvivalRegressionExample {
 
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("AFTSurvivalRegressionExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("AFTSurvivalRegressionExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val training = spark.createDataFrame(Seq(
+    val training = sqlContext.createDataFrame(Seq(
       (1.218, 1.0, Vectors.dense(1.560, -0.605)),
       (2.949, 0.0, Vectors.dense(0.346, 2.158)),
       (3.627, 0.0, Vectors.dense(1.380, 0.231)),
@@ -60,7 +56,7 @@ object AFTSurvivalRegressionExample {
     model.transform(training).show(false)
     // $example off$
 
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

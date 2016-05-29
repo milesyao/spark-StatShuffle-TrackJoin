@@ -20,7 +20,6 @@ package org.apache.spark.sql.execution.columnar
 import java.math.{BigDecimal, BigInteger}
 import java.nio.ByteBuffer
 
-import scala.annotation.tailrec
 import scala.reflect.runtime.universe.TypeTag
 
 import org.apache.spark.sql.catalyst.InternalRow
@@ -40,7 +39,7 @@ import org.apache.spark.unsafe.types.UTF8String
  * so we do not have helper methods for them.
  *
  *
- * WARNING: This only works with HeapByteBuffer
+ * WARNNING: This only works with HeapByteBuffer
  */
 private[columnar] object ByteBufferHelper {
   def getInt(buffer: ByteBuffer): Int = {
@@ -549,7 +548,7 @@ private[columnar] object LARGE_DECIMAL {
 private[columnar] case class STRUCT(dataType: StructType)
   extends ColumnType[UnsafeRow] with DirectCopyColumnType[UnsafeRow] {
 
-  private val numOfFields: Int = dataType.fields.length
+  private val numOfFields: Int = dataType.fields.size
 
   override def defaultSize: Int = 20
 
@@ -575,10 +574,11 @@ private[columnar] case class STRUCT(dataType: StructType)
     assert(buffer.hasArray)
     val cursor = buffer.position()
     buffer.position(cursor + sizeInBytes)
-    val unsafeRow = new UnsafeRow(numOfFields)
+    val unsafeRow = new UnsafeRow
     unsafeRow.pointTo(
       buffer.array(),
       Platform.BYTE_ARRAY_OFFSET + buffer.arrayOffset() + cursor,
+      numOfFields,
       sizeInBytes)
     unsafeRow
   }
@@ -664,7 +664,6 @@ private[columnar] case class MAP(dataType: MapType)
 }
 
 private[columnar] object ColumnType {
-  @tailrec
   def apply(dataType: DataType): ColumnType[_] = {
     dataType match {
       case NullType => NULL

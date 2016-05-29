@@ -18,30 +18,47 @@
 package org.apache.spark.ml.feature;
 
 import java.util.Arrays;
-import java.util.List;
 
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
-import org.apache.spark.SharedSparkSession;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 
-public class JavaBucketizerSuite extends SharedSparkSession {
+public class JavaBucketizerSuite {
+  private transient JavaSparkContext jsc;
+  private transient SQLContext jsql;
+
+  @Before
+  public void setUp() {
+    jsc = new JavaSparkContext("local", "JavaBucketizerSuite");
+    jsql = new SQLContext(jsc);
+  }
+
+  @After
+  public void tearDown() {
+    jsc.stop();
+    jsc = null;
+  }
 
   @Test
   public void bucketizerTest() {
     double[] splits = {-0.5, 0.0, 0.5};
 
-    StructType schema = new StructType(new StructField[]{
+    StructType schema = new StructType(new StructField[] {
       new StructField("feature", DataTypes.DoubleType, false, Metadata.empty())
     });
-    Dataset<Row> dataset = spark.createDataFrame(
+    DataFrame dataset = jsql.createDataFrame(
       Arrays.asList(
         RowFactory.create(-0.5),
         RowFactory.create(-0.3),
@@ -54,7 +71,7 @@ public class JavaBucketizerSuite extends SharedSparkSession {
       .setOutputCol("result")
       .setSplits(splits);
 
-    List<Row> result = bucketizer.transform(dataset).select("result").collectAsList();
+    Row[] result = bucketizer.transform(dataset).select("result").collect();
 
     for (Row r : result) {
       double index = r.getDouble(0);

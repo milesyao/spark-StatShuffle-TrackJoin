@@ -18,11 +18,11 @@
 package org.apache.spark.ml.feature
 
 import org.apache.spark.SparkContext
-import org.apache.spark.annotation.{Experimental, Since}
-import org.apache.spark.ml.param.{Param, ParamMap}
+import org.apache.spark.annotation.{Since, Experimental}
+import org.apache.spark.ml.param.{ParamMap, Param}
 import org.apache.spark.ml.Transformer
 import org.apache.spark.ml.util._
-import org.apache.spark.sql.{DataFrame, Dataset, Row, SQLContext}
+import org.apache.spark.sql.{SQLContext, DataFrame, Row}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -48,7 +48,6 @@ class SQLTransformer @Since("1.6.0") (override val uid: String) extends Transfor
 
   /**
    * SQL statement parameter. The statement is provided in string form.
-   *
    * @group param
    */
   @Since("1.6.0")
@@ -64,12 +63,13 @@ class SQLTransformer @Since("1.6.0") (override val uid: String) extends Transfor
 
   private val tableIdentifier: String = "__THIS__"
 
-  @Since("2.0.0")
-  override def transform(dataset: Dataset[_]): DataFrame = {
+  @Since("1.6.0")
+  override def transform(dataset: DataFrame): DataFrame = {
     val tableName = Identifiable.randomUID(uid)
-    dataset.createOrReplaceTempView(tableName)
+    dataset.registerTempTable(tableName)
     val realStatement = $(statement).replace(tableIdentifier, tableName)
-    dataset.sparkSession.sql(realStatement)
+    val outputDF = dataset.sqlContext.sql(realStatement)
+    outputDF
   }
 
   @Since("1.6.0")
@@ -78,11 +78,8 @@ class SQLTransformer @Since("1.6.0") (override val uid: String) extends Transfor
     val sqlContext = SQLContext.getOrCreate(sc)
     val dummyRDD = sc.parallelize(Seq(Row.empty))
     val dummyDF = sqlContext.createDataFrame(dummyRDD, schema)
-    val tableName = Identifiable.randomUID(uid)
-    val realStatement = $(statement).replace(tableIdentifier, tableName)
-    dummyDF.createOrReplaceTempView(tableName)
-    val outputSchema = sqlContext.sql(realStatement).schema
-    sqlContext.dropTempTable(tableName)
+    dummyDF.registerTempTable(tableIdentifier)
+    val outputSchema = sqlContext.sql($(statement)).schema
     outputSchema
   }
 

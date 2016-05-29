@@ -17,19 +17,18 @@
 
 from __future__ import print_function
 
+from pyspark import SparkContext
 # $example on$
 from pyspark.ml.feature import HashingTF, IDF, Tokenizer
 # $example off$
-from pyspark.sql import SparkSession
+from pyspark.sql import SQLContext
 
 if __name__ == "__main__":
-    spark = SparkSession\
-        .builder\
-        .appName("TfIdfExample")\
-        .getOrCreate()
+    sc = SparkContext(appName="TfIdfExample")
+    sqlContext = SQLContext(sc)
 
     # $example on$
-    sentenceData = spark.createDataFrame([
+    sentenceData = sqlContext.createDataFrame([
         (0, "Hi I heard about Spark"),
         (0, "I wish Java could use case classes"),
         (1, "Logistic regression models are neat")
@@ -38,8 +37,6 @@ if __name__ == "__main__":
     wordsData = tokenizer.transform(sentenceData)
     hashingTF = HashingTF(inputCol="words", outputCol="rawFeatures", numFeatures=20)
     featurizedData = hashingTF.transform(wordsData)
-    # alternatively, CountVectorizer can also be used to get term frequency vectors
-
     idf = IDF(inputCol="rawFeatures", outputCol="features")
     idfModel = idf.fit(featurizedData)
     rescaledData = idfModel.transform(featurizedData)
@@ -47,4 +44,4 @@ if __name__ == "__main__":
         print(features_label)
     # $example off$
 
-    spark.stop()
+    sc.stop()

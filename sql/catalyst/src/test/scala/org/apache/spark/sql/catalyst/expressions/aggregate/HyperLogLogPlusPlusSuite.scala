@@ -19,11 +19,12 @@ package org.apache.spark.sql.catalyst.expressions.aggregate
 
 import java.util.Random
 
-import scala.collection.mutable
-
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.catalyst.expressions.{BoundReference, MutableRow, SpecificMutableRow}
+import org.apache.spark.sql.catalyst.expressions.{SpecificMutableRow, MutableRow, BoundReference}
 import org.apache.spark.sql.types.{DataType, IntegerType}
+
+import scala.collection.mutable
+import org.scalatest.Assertions._
 
 class HyperLogLogPlusPlusSuite extends SparkFunSuite {
 
@@ -131,7 +132,7 @@ class HyperLogLogPlusPlusSuite extends SparkFunSuite {
       i += 1
     }
 
-    // Merge the lower and upper halves.
+    // Merge the lower and upper halfs.
     hll.merge(buffer1a, buffer1b)
 
     // Create the other buffer in reverse

@@ -19,11 +19,11 @@ package org.apache.spark.ml
 
 import scala.annotation.varargs
 
-import org.apache.spark.annotation.{DeveloperApi, Since}
-import org.apache.spark.internal.Logging
+import org.apache.spark.Logging
+import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared._
-import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
@@ -41,10 +41,9 @@ abstract class Transformer extends PipelineStage {
    * @param otherParamPairs other param pairs, overwrite embedded params
    * @return transformed dataset
    */
-  @Since("2.0.0")
   @varargs
   def transform(
-      dataset: Dataset[_],
+      dataset: DataFrame,
       firstParamPair: ParamPair[_],
       otherParamPairs: ParamPair[_]*): DataFrame = {
     val map = new ParamMap()
@@ -59,16 +58,14 @@ abstract class Transformer extends PipelineStage {
    * @param paramMap additional parameters, overwrite embedded params
    * @return transformed dataset
    */
-  @Since("2.0.0")
-  def transform(dataset: Dataset[_], paramMap: ParamMap): DataFrame = {
+  def transform(dataset: DataFrame, paramMap: ParamMap): DataFrame = {
     this.copy(paramMap).transform(dataset)
   }
 
   /**
    * Transforms the input dataset.
    */
-  @Since("2.0.0")
-  def transform(dataset: Dataset[_]): DataFrame
+  def transform(dataset: DataFrame): DataFrame
 
   override def copy(extra: ParamMap): Transformer
 }
@@ -116,10 +113,10 @@ abstract class UnaryTransformer[IN, OUT, T <: UnaryTransformer[IN, OUT, T]]
     StructType(outputFields)
   }
 
-  override def transform(dataset: Dataset[_]): DataFrame = {
+  override def transform(dataset: DataFrame): DataFrame = {
     transformSchema(dataset.schema, logging = true)
-    val transformUDF = udf(this.createTransformFunc, outputDataType)
-    dataset.withColumn($(outputCol), transformUDF(dataset($(inputCol))))
+    dataset.withColumn($(outputCol),
+      callUDF(this.createTransformFunc, outputDataType, dataset($(inputCol))))
   }
 
   override def copy(extra: ParamMap): T = defaultCopy(extra)

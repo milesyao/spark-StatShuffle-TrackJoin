@@ -21,17 +21,17 @@ package org.apache.spark.examples.ml
 // $example on$
 import org.apache.spark.ml.feature.MinMaxScaler
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object MinMaxScalerExample {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("MinMaxScalerExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("MinMaxScalerExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val dataFrame = spark.read.format("libsvm").load("data/mllib/sample_libsvm_data.txt")
+    val dataFrame = sqlContext.read.format("libsvm").load("data/mllib/sample_libsvm_data.txt")
 
     val scaler = new MinMaxScaler()
       .setInputCol("features")
@@ -44,8 +44,7 @@ object MinMaxScalerExample {
     val scaledData = scalerModel.transform(dataFrame)
     scaledData.show()
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

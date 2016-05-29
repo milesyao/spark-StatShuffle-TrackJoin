@@ -19,8 +19,8 @@ package org.apache.spark.sql.hive.thriftserver
 
 import java.security.PrivilegedExceptionAction
 import java.sql.{Date, Timestamp}
-import java.util.{Arrays, Map => JMap, UUID}
 import java.util.concurrent.RejectedExecutionException
+import java.util.{Arrays, UUID, Map => JMap}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.{ArrayBuffer, Map => SMap}
@@ -32,20 +32,19 @@ import org.apache.hive.service.cli._
 import org.apache.hive.service.cli.operation.ExecuteStatementOperation
 import org.apache.hive.service.cli.session.HiveSession
 
-import org.apache.spark.internal.Logging
-import org.apache.spark.sql.{DataFrame, Row => SparkRow, SQLContext}
-import org.apache.spark.sql.execution.command.SetCommand
-import org.apache.spark.sql.hive.HiveUtils
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.Logging
+import org.apache.spark.sql.execution.SetCommand
+import org.apache.spark.sql.hive.{HiveContext, HiveMetastoreTypes}
 import org.apache.spark.sql.types._
-import org.apache.spark.util.{Utils => SparkUtils}
+import org.apache.spark.sql.{DataFrame, SQLConf, Row => SparkRow}
+
 
 private[hive] class SparkExecuteStatementOperation(
     parentSession: HiveSession,
     statement: String,
     confOverlay: JMap[String, String],
     runInBackground: Boolean = true)
-    (sqlContext: SQLContext, sessionToActivePool: SMap[SessionHandle, String])
+    (hiveContext: HiveContext, sessionToActivePool: SMap[SessionHandle, String])
   extends ExecuteStatementOperation(parentSession, statement, confOverlay, runInBackground)
   with Logging {
 
@@ -60,7 +59,7 @@ private[hive] class SparkExecuteStatementOperation(
     } else {
       logInfo(s"Result Schema: ${result.queryExecution.analyzed.output}")
       val schema = result.queryExecution.analyzed.output.map { attr =>
-        new FieldSchema(attr.name, attr.dataType.catalogString, "")
+        new FieldSchema(attr.name, HiveMetastoreTypes.toMetastoreType(attr.dataType), "")
       }
       new TableSchema(schema.asJava)
     }
@@ -68,7 +67,7 @@ private[hive] class SparkExecuteStatementOperation(
 
   def close(): Unit = {
     // RDDs will be cleaned automatically upon garbage collection.
-    sqlContext.sparkContext.clearJobGroup()
+    hiveContext.sparkContext.clearJobGroup()
     logDebug(s"CLOSING $statementId")
     cleanup(OperationState.CLOSED)
   }
@@ -96,11 +95,9 @@ private[hive] class SparkExecuteStatementOperation(
       case DateType =>
         to += from.getAs[Date](ordinal)
       case TimestampType =>
-        to += from.getAs[Timestamp](ordinal)
-      case BinaryType =>
-        to += from.getAs[Array[Byte]](ordinal)
-      case _: ArrayType | _: StructType | _: MapType =>
-        val hiveString = HiveUtils.toHiveString((from.get(ordinal), dataTypes(ordinal)))
+        to +=  from.getAs[Timestamp](ordinal)
+      case BinaryType | _: ArrayType | _: StructType | _: MapType =>
+        val hiveString = HiveContext.toHiveString((from.get(ordinal), dataTypes(ordinal)))
         to += hiveString
     }
   }
@@ -196,7 +193,8 @@ private[hive] class SparkExecuteStatementOperation(
     logInfo(s"Running query '$statement' with $statementId")
     setState(OperationState.RUNNING)
     // Always use the latest class loader provided by executionHive's state.
-    val executionHiveClassLoader = sqlContext.sharedState.jarClassLoader
+    val executionHiveClassLoader =
+      hiveContext.executionHive.state.getConf.getClassLoader
     Thread.currentThread().setContextClassLoader(executionHiveClassLoader)
 
     HiveThriftServer2.listener.onStatementStart(
@@ -205,12 +203,12 @@ private[hive] class SparkExecuteStatementOperation(
       statement,
       statementId,
       parentSession.getUsername)
-    sqlContext.sparkContext.setJobGroup(statementId, statement)
+    hiveContext.sparkContext.setJobGroup(statementId, statement)
     sessionToActivePool.get(parentSession.getSessionHandle).foreach { pool =>
-      sqlContext.sparkContext.setLocalProperty("spark.scheduler.pool", pool)
+      hiveContext.sparkContext.setLocalProperty("spark.scheduler.pool", pool)
     }
     try {
-      result = sqlContext.sql(statement)
+      result = hiveContext.sql(statement)
       logDebug(result.queryExecution.toString())
       result.queryExecution.logical match {
         case SetCommand(Some((SQLConf.THRIFTSERVER_POOL.key, Some(value)))) =>
@@ -221,9 +219,9 @@ private[hive] class SparkExecuteStatementOperation(
       HiveThriftServer2.listener.onStatementParsed(statementId, result.queryExecution.toString())
       iter = {
         val useIncrementalCollect =
-          sqlContext.getConf("spark.sql.thriftServer.incrementalCollect", "false").toBoolean
+          hiveContext.getConf("spark.sql.thriftServer.incrementalCollect", "false").toBoolean
         if (useIncrementalCollect) {
-          result.toLocalIterator.asScala
+          result.rdd.toLocalIterator
         } else {
           result.collect().iterator
         }
@@ -234,7 +232,7 @@ private[hive] class SparkExecuteStatementOperation(
         if (getStatus().getState() == OperationState.CANCELED) {
           return
         } else {
-          setState(OperationState.ERROR)
+          setState(OperationState.ERROR);
           throw e
         }
       // Actually do need to catch Throwable as some failures don't inherit from Exception and
@@ -244,7 +242,7 @@ private[hive] class SparkExecuteStatementOperation(
         logError(s"Error executing query, currentState $currentState, ", e)
         setState(OperationState.ERROR)
         HiveThriftServer2.listener.onStatementError(
-          statementId, e.getMessage, SparkUtils.exceptionString(e))
+          statementId, e.getMessage, e.getStackTraceString)
         throw new HiveSQLException(e.toString)
     }
     setState(OperationState.FINISHED)
@@ -254,7 +252,7 @@ private[hive] class SparkExecuteStatementOperation(
   override def cancel(): Unit = {
     logInfo(s"Cancel '$statement' with $statementId")
     if (statementId != null) {
-      sqlContext.sparkContext.cancelJobGroup(statementId)
+      hiveContext.sparkContext.cancelJobGroup(statementId)
     }
     cleanup(OperationState.CANCELED)
   }

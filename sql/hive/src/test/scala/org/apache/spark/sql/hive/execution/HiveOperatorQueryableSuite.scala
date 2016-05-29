@@ -17,8 +17,8 @@
 
 package org.apache.spark.sql.hive.execution
 
-import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.hive.test.TestHiveSingleton
+import org.apache.spark.sql.{Row, QueryTest}
+import org.apache.spark.sql.hive.test.{TestHive, TestHiveSingleton}
 
 /**
  * A set of tests that validates commands can also be queried by like a table
@@ -29,8 +29,8 @@ class HiveOperatorQueryableSuite extends QueryTest with TestHiveSingleton {
   test("SPARK-5324 query result of describe command") {
     hiveContext.loadTestTable("src")
 
-    // Creates a temporary view with the output of a describe command
-    sql("desc src").createOrReplaceTempView("mydesc")
+    // register a describe command to be a temp table
+    sql("desc src").registerTempTable("mydesc")
     checkAnswer(
       sql("desc mydesc"),
       Seq(

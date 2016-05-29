@@ -19,22 +19,20 @@ package org.apache.spark.streaming.receiver
 
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.ConcurrentLinkedQueue
 
-import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 import com.google.common.base.Throwables
 import org.apache.hadoop.conf.Configuration
 
-import org.apache.spark.{SparkEnv, SparkException}
-import org.apache.spark.internal.Logging
 import org.apache.spark.rpc.{RpcEnv, ThreadSafeRpcEndpoint}
 import org.apache.spark.storage.StreamBlockId
 import org.apache.spark.streaming.Time
 import org.apache.spark.streaming.scheduler._
 import org.apache.spark.streaming.util.WriteAheadLogUtils
 import org.apache.spark.util.RpcUtils
+import org.apache.spark.{Logging, SparkEnv, SparkException}
 
 /**
  * Concrete implementation of [[org.apache.spark.streaming.receiver.ReceiverSupervisor]]
@@ -60,7 +58,7 @@ private[streaming] class ReceiverSupervisorImpl(
             "Please use streamingContext.checkpoint() to set the checkpoint directory. " +
             "See documentation for more details.")
       }
-      new WriteAheadLogBasedBlockHandler(env.blockManager, env.serializerManager, receiver.streamId,
+      new WriteAheadLogBasedBlockHandler(env.blockManager, receiver.streamId,
         receiver.storageLevel, env.conf, hadoopConf, checkpointDirOption.get)
     } else {
       new BlockManagerBasedBlockHandler(env.blockManager, receiver.storageLevel)
@@ -85,7 +83,7 @@ private[streaming] class ReceiverSupervisorImpl(
           cleanupOldBlocks(threshTime)
         case UpdateRateLimit(eps) =>
           logInfo(s"Received a new rate limit: $eps.")
-          registeredBlockGenerators.asScala.foreach { bg =>
+          registeredBlockGenerators.foreach { bg =>
             bg.updateRate(eps)
           }
       }
@@ -94,7 +92,8 @@ private[streaming] class ReceiverSupervisorImpl(
   /** Unique block ids if one wants to add blocks directly */
   private val newBlockId = new AtomicLong(System.currentTimeMillis())
 
-  private val registeredBlockGenerators = new ConcurrentLinkedQueue[BlockGenerator]()
+  private val registeredBlockGenerators = new mutable.ArrayBuffer[BlockGenerator]
+    with mutable.SynchronizedBuffer[BlockGenerator]
 
   /** Divides received data records into data blocks for pushing in BlockManager. */
   private val defaultBlockGeneratorListener = new BlockGeneratorListener {
@@ -171,11 +170,11 @@ private[streaming] class ReceiverSupervisorImpl(
   }
 
   override protected def onStart() {
-    registeredBlockGenerators.asScala.foreach { _.start() }
+    registeredBlockGenerators.foreach { _.start() }
   }
 
   override protected def onStop(message: String, error: Option[Throwable]) {
-    registeredBlockGenerators.asScala.foreach { _.stop() }
+    registeredBlockGenerators.foreach { _.stop() }
     env.rpcEnv.stop(endpoint)
   }
 
@@ -195,11 +194,10 @@ private[streaming] class ReceiverSupervisorImpl(
   override def createBlockGenerator(
       blockGeneratorListener: BlockGeneratorListener): BlockGenerator = {
     // Cleanup BlockGenerators that have already been stopped
-    val stoppedGenerators = registeredBlockGenerators.asScala.filter{ _.isStopped() }
-    stoppedGenerators.foreach(registeredBlockGenerators.remove(_))
+    registeredBlockGenerators --= registeredBlockGenerators.filter{ _.isStopped() }
 
     val newBlockGenerator = new BlockGenerator(blockGeneratorListener, streamId, env.conf)
-    registeredBlockGenerators.add(newBlockGenerator)
+    registeredBlockGenerators += newBlockGenerator
     newBlockGenerator
   }
 

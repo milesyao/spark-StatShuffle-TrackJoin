@@ -18,11 +18,12 @@
 // scalastyle:off println
 package org.apache.spark.examples.ml
 
+import org.apache.spark.{SparkContext, SparkConf}
+import org.apache.spark.sql.SQLContext
 // $example on$
 import org.apache.spark.ml.classification.MultilayerPerceptronClassifier
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
 // $example off$
-import org.apache.spark.sql.SparkSession
 
 /**
  * An example for Multilayer Perceptron Classification.
@@ -30,14 +31,13 @@ import org.apache.spark.sql.SparkSession
 object MultilayerPerceptronClassifierExample {
 
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("MultilayerPerceptronClassifierExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("MultilayerPerceptronClassifierExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
     // Load the data stored in LIBSVM format as a DataFrame.
-    val data = spark.read.format("libsvm")
+    val data = sqlContext.read.format("libsvm")
       .load("data/mllib/sample_multiclass_classification_data.txt")
     // Split the data into train and test
     val splits = data.randomSplit(Array(0.6, 0.4), seed = 1234L)
@@ -63,7 +63,7 @@ object MultilayerPerceptronClassifierExample {
     println("Precision:" + evaluator.evaluate(predictionAndLabels))
     // $example off$
 
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

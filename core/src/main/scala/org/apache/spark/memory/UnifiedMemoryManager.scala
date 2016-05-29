@@ -17,8 +17,10 @@
 
 package org.apache.spark.memory
 
+import scala.collection.mutable
+
 import org.apache.spark.SparkConf
-import org.apache.spark.storage.BlockId
+import org.apache.spark.storage.{BlockStatus, BlockId}
 
 /**
  * A [[MemoryManager]] that enforces a soft boundary between execution and storage such that
@@ -39,32 +41,27 @@ import org.apache.spark.storage.BlockId
  * up most of the storage space, in which case the new blocks will be evicted immediately
  * according to their respective storage levels.
  *
- * @param onHeapStorageRegionSize Size of the storage region, in bytes.
+ * @param storageRegionSize Size of the storage region, in bytes.
  *                          This region is not statically reserved; execution can borrow from
  *                          it if necessary. Cached blocks can be evicted only if actual
  *                          storage memory usage exceeds this region.
  */
 private[spark] class UnifiedMemoryManager private[memory] (
     conf: SparkConf,
-    val maxHeapMemory: Long,
-    onHeapStorageRegionSize: Long,
+    val maxMemory: Long,
+    storageRegionSize: Long,
     numCores: Int)
   extends MemoryManager(
     conf,
     numCores,
-    onHeapStorageRegionSize,
-    maxHeapMemory - onHeapStorageRegionSize) {
+    storageRegionSize,
+    maxMemory - storageRegionSize) {
 
-  private def assertInvariants(): Unit = {
-    assert(onHeapExecutionMemoryPool.poolSize + onHeapStorageMemoryPool.poolSize == maxHeapMemory)
-    assert(
-      offHeapExecutionMemoryPool.poolSize + offHeapStorageMemoryPool.poolSize == maxOffHeapMemory)
-  }
+  // We always maintain this invariant:
+  assert(onHeapExecutionMemoryPool.poolSize + storageMemoryPool.poolSize == maxMemory)
 
-  assertInvariants()
-
-  override def maxOnHeapStorageMemory: Long = synchronized {
-    maxHeapMemory - onHeapExecutionMemoryPool.memoryUsed
+  override def maxStorageMemory: Long = synchronized {
+    maxMemory - onHeapExecutionMemoryPool.memoryUsed
   }
 
   /**
@@ -80,105 +77,89 @@ private[spark] class UnifiedMemoryManager private[memory] (
       numBytes: Long,
       taskAttemptId: Long,
       memoryMode: MemoryMode): Long = synchronized {
-    assertInvariants()
+    assert(onHeapExecutionMemoryPool.poolSize + storageMemoryPool.poolSize == maxMemory)
     assert(numBytes >= 0)
-    val (executionPool, storagePool, storageRegionSize, maxMemory) = memoryMode match {
-      case MemoryMode.ON_HEAP => (
-        onHeapExecutionMemoryPool,
-        onHeapStorageMemoryPool,
-        onHeapStorageRegionSize,
-        maxHeapMemory)
-      case MemoryMode.OFF_HEAP => (
-        offHeapExecutionMemoryPool,
-        offHeapStorageMemoryPool,
-        offHeapStorageMemory,
-        maxOffHeapMemory)
-    }
+    memoryMode match {
+      case MemoryMode.ON_HEAP =>
 
-    /**
-     * Grow the execution pool by evicting cached blocks, thereby shrinking the storage pool.
-     *
-     * When acquiring memory for a task, the execution pool may need to make multiple
-     * attempts. Each attempt must be able to evict storage in case another task jumps in
-     * and caches a large block between the attempts. This is called once per attempt.
-     */
-    def maybeGrowExecutionPool(extraMemoryNeeded: Long): Unit = {
-      if (extraMemoryNeeded > 0) {
-        // There is not enough free memory in the execution pool, so try to reclaim memory from
-        // storage. We can reclaim any free memory from the storage pool. If the storage pool
-        // has grown to become larger than `storageRegionSize`, we can evict blocks and reclaim
-        // the memory that storage has borrowed from execution.
-        val memoryReclaimableFromStorage = math.max(
-          storagePool.memoryFree,
-          storagePool.poolSize - storageRegionSize)
-        if (memoryReclaimableFromStorage > 0) {
-          // Only reclaim as much space as is necessary and available:
-          val spaceToReclaim = storagePool.freeSpaceToShrinkPool(
-            math.min(extraMemoryNeeded, memoryReclaimableFromStorage))
-          storagePool.decrementPoolSize(spaceToReclaim)
-          executionPool.incrementPoolSize(spaceToReclaim)
+        /**
+         * Grow the execution pool by evicting cached blocks, thereby shrinking the storage pool.
+         *
+         * When acquiring memory for a task, the execution pool may need to make multiple
+         * attempts. Each attempt must be able to evict storage in case another task jumps in
+         * and caches a large block between the attempts. This is called once per attempt.
+         */
+        def maybeGrowExecutionPool(extraMemoryNeeded: Long): Unit = {
+          if (extraMemoryNeeded > 0) {
+            // There is not enough free memory in the execution pool, so try to reclaim memory from
+            // storage. We can reclaim any free memory from the storage pool. If the storage pool
+            // has grown to become larger than `storageRegionSize`, we can evict blocks and reclaim
+            // the memory that storage has borrowed from execution.
+            val memoryReclaimableFromStorage =
+              math.max(storageMemoryPool.memoryFree, storageMemoryPool.poolSize - storageRegionSize)
+            if (memoryReclaimableFromStorage > 0) {
+              // Only reclaim as much space as is necessary and available:
+              val spaceReclaimed = storageMemoryPool.shrinkPoolToFreeSpace(
+                math.min(extraMemoryNeeded, memoryReclaimableFromStorage))
+              onHeapExecutionMemoryPool.incrementPoolSize(spaceReclaimed)
+            }
+          }
         }
-      }
-    }
 
-    /**
-     * The size the execution pool would have after evicting storage memory.
-     *
-     * The execution memory pool divides this quantity among the active tasks evenly to cap
-     * the execution memory allocation for each task. It is important to keep this greater
-     * than the execution pool size, which doesn't take into account potential memory that
-     * could be freed by evicting storage. Otherwise we may hit SPARK-12155.
-     *
-     * Additionally, this quantity should be kept below `maxMemory` to arbitrate fairness
-     * in execution memory allocation across tasks, Otherwise, a task may occupy more than
-     * its fair share of execution memory, mistakenly thinking that other tasks can acquire
-     * the portion of storage memory that cannot be evicted.
-     */
-    def computeMaxExecutionPoolSize(): Long = {
-      maxMemory - math.min(storagePool.memoryUsed, storageRegionSize)
-    }
+        /**
+         * The size the execution pool would have after evicting storage memory.
+         *
+         * The execution memory pool divides this quantity among the active tasks evenly to cap
+         * the execution memory allocation for each task. It is important to keep this greater
+         * than the execution pool size, which doesn't take into account potential memory that
+         * could be freed by evicting storage. Otherwise we may hit SPARK-12155.
+         *
+         * Additionally, this quantity should be kept below `maxMemory` to arbitrate fairness
+         * in execution memory allocation across tasks, Otherwise, a task may occupy more than
+         * its fair share of execution memory, mistakenly thinking that other tasks can acquire
+         * the portion of storage memory that cannot be evicted.
+         */
+        def computeMaxExecutionPoolSize(): Long = {
+          maxMemory - math.min(storageMemoryUsed, storageRegionSize)
+        }
 
-    executionPool.acquireMemory(
-      numBytes, taskAttemptId, maybeGrowExecutionPool, computeMaxExecutionPoolSize)
+        onHeapExecutionMemoryPool.acquireMemory(
+          numBytes, taskAttemptId, maybeGrowExecutionPool, computeMaxExecutionPoolSize)
+
+      case MemoryMode.OFF_HEAP =>
+        // For now, we only support on-heap caching of data, so we do not need to interact with
+        // the storage pool when allocating off-heap memory. This will change in the future, though.
+        offHeapExecutionMemoryPool.acquireMemory(numBytes, taskAttemptId)
+    }
   }
 
   override def acquireStorageMemory(
       blockId: BlockId,
       numBytes: Long,
-      memoryMode: MemoryMode): Boolean = synchronized {
-    assertInvariants()
+      evictedBlocks: mutable.Buffer[(BlockId, BlockStatus)]): Boolean = synchronized {
+    assert(onHeapExecutionMemoryPool.poolSize + storageMemoryPool.poolSize == maxMemory)
     assert(numBytes >= 0)
-    val (executionPool, storagePool, maxMemory) = memoryMode match {
-      case MemoryMode.ON_HEAP => (
-        onHeapExecutionMemoryPool,
-        onHeapStorageMemoryPool,
-        maxOnHeapStorageMemory)
-      case MemoryMode.OFF_HEAP => (
-        offHeapExecutionMemoryPool,
-        offHeapStorageMemoryPool,
-        maxOffHeapMemory)
-    }
-    if (numBytes > maxMemory) {
+    if (numBytes > maxStorageMemory) {
       // Fail fast if the block simply won't fit
       logInfo(s"Will not store $blockId as the required space ($numBytes bytes) exceeds our " +
-        s"memory limit ($maxMemory bytes)")
+        s"memory limit ($maxStorageMemory bytes)")
       return false
     }
-    if (numBytes > storagePool.memoryFree) {
+    if (numBytes > storageMemoryPool.memoryFree) {
       // There is not enough free memory in the storage pool, so try to borrow free memory from
       // the execution pool.
-      val memoryBorrowedFromExecution = Math.min(executionPool.memoryFree, numBytes)
-      executionPool.decrementPoolSize(memoryBorrowedFromExecution)
-      storagePool.incrementPoolSize(memoryBorrowedFromExecution)
+      val memoryBorrowedFromExecution = Math.min(onHeapExecutionMemoryPool.memoryFree, numBytes)
+      onHeapExecutionMemoryPool.decrementPoolSize(memoryBorrowedFromExecution)
+      storageMemoryPool.incrementPoolSize(memoryBorrowedFromExecution)
     }
-    storagePool.acquireMemory(blockId, numBytes)
+    storageMemoryPool.acquireMemory(blockId, numBytes, evictedBlocks)
   }
 
   override def acquireUnrollMemory(
       blockId: BlockId,
       numBytes: Long,
-      memoryMode: MemoryMode): Boolean = synchronized {
-    acquireStorageMemory(blockId, numBytes, memoryMode)
+      evictedBlocks: mutable.Buffer[(BlockId, BlockStatus)]): Boolean = synchronized {
+    acquireStorageMemory(blockId, numBytes, evictedBlocks)
   }
 }
 
@@ -194,8 +175,8 @@ object UnifiedMemoryManager {
     val maxMemory = getMaxMemory(conf)
     new UnifiedMemoryManager(
       conf,
-      maxHeapMemory = maxMemory,
-      onHeapStorageRegionSize =
+      maxMemory = maxMemory,
+      storageRegionSize =
         (maxMemory * conf.getDouble("spark.memory.storageFraction", 0.5)).toLong,
       numCores = numCores)
   }
@@ -207,20 +188,10 @@ object UnifiedMemoryManager {
     val systemMemory = conf.getLong("spark.testing.memory", Runtime.getRuntime.maxMemory)
     val reservedMemory = conf.getLong("spark.testing.reservedMemory",
       if (conf.contains("spark.testing")) 0 else RESERVED_SYSTEM_MEMORY_BYTES)
-    val minSystemMemory = (reservedMemory * 1.5).ceil.toLong
+    val minSystemMemory = reservedMemory * 1.5
     if (systemMemory < minSystemMemory) {
       throw new IllegalArgumentException(s"System memory $systemMemory must " +
-        s"be at least $minSystemMemory. Please increase heap size using the --driver-memory " +
-        s"option or spark.driver.memory in Spark configuration.")
-    }
-    // SPARK-12759 Check executor memory to fail fast if memory is insufficient
-    if (conf.contains("spark.executor.memory")) {
-      val executorMemory = conf.getSizeAsBytes("spark.executor.memory")
-      if (executorMemory < minSystemMemory) {
-        throw new IllegalArgumentException(s"Executor memory $executorMemory must be at least " +
-          s"$minSystemMemory. Please increase executor memory using the " +
-          s"--executor-memory option or spark.executor.memory in Spark configuration.")
-      }
+        s"be at least $minSystemMemory. Please use a larger heap size.")
     }
     val usableMemory = systemMemory - reservedMemory
     val memoryFraction = conf.getDouble("spark.memory.fraction", 0.75)

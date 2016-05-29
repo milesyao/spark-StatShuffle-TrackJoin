@@ -23,13 +23,15 @@ import java.util.Random
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.HashSet
 
-import breeze.linalg.{squaredDistance, DenseVector, Vector}
+import breeze.linalg.{Vector, DenseVector, squaredDistance}
+
+import org.apache.spark.SparkContext._
 
 /**
  * K-means clustering.
  *
  * This is an example implementation for learning how to use Spark. For more conventional use,
- * please refer to org.apache.spark.ml.clustering.KMeans.
+ * please refer to org.apache.spark.mllib.clustering.KMeans
  */
 object LocalKMeans {
   val N = 1000
@@ -41,7 +43,7 @@ object LocalKMeans {
 
   def generateData: Array[DenseVector[Double]] = {
     def generatePoint(i: Int): DenseVector[Double] = {
-      DenseVector.fill(D) {rand.nextDouble * R}
+      DenseVector.fill(D){rand.nextDouble * R}
     }
     Array.tabulate(N)(generatePoint)
   }
@@ -66,7 +68,7 @@ object LocalKMeans {
   def showWarning() {
     System.err.println(
       """WARN: This is a naive implementation of KMeans Clustering and is given as an example!
-        |Please use org.apache.spark.ml.clustering.KMeans
+        |Please use the KMeans method found in org.apache.spark.mllib.clustering
         |for more conventional use.
       """.stripMargin)
   }

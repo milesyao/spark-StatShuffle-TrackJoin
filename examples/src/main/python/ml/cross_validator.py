@@ -17,14 +17,13 @@
 
 from __future__ import print_function
 
-# $example on$
+from pyspark import SparkContext
 from pyspark.ml import Pipeline
 from pyspark.ml.classification import LogisticRegression
 from pyspark.ml.evaluation import BinaryClassificationEvaluator
 from pyspark.ml.feature import HashingTF, Tokenizer
 from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
-# $example off$
-from pyspark.sql import Row, SparkSession
+from pyspark.sql import Row, SQLContext
 
 """
 A simple example demonstrating model selection using CrossValidator.
@@ -35,26 +34,25 @@ Run with:
 """
 
 if __name__ == "__main__":
-    spark = SparkSession\
-        .builder\
-        .appName("CrossValidatorExample")\
-        .getOrCreate()
-    # $example on$
+    sc = SparkContext(appName="CrossValidatorExample")
+    sqlContext = SQLContext(sc)
+
     # Prepare training documents, which are labeled.
-    training = spark.createDataFrame([
-        (0, "a b c d e spark", 1.0),
-        (1, "b d", 0.0),
-        (2, "spark f g h", 1.0),
-        (3, "hadoop mapreduce", 0.0),
-        (4, "b spark who", 1.0),
-        (5, "g d a y", 0.0),
-        (6, "spark fly", 1.0),
-        (7, "was mapreduce", 0.0),
-        (8, "e spark program", 1.0),
-        (9, "a e c l", 0.0),
-        (10, "spark compile", 1.0),
-        (11, "hadoop software", 0.0)
-    ], ["id", "text", "label"])
+    LabeledDocument = Row("id", "text", "label")
+    training = sc.parallelize([(0, "a b c d e spark", 1.0),
+                               (1, "b d", 0.0),
+                               (2, "spark f g h", 1.0),
+                               (3, "hadoop mapreduce", 0.0),
+                               (4, "b spark who", 1.0),
+                               (5, "g d a y", 0.0),
+                               (6, "spark fly", 1.0),
+                               (7, "was mapreduce", 0.0),
+                               (8, "e spark program", 1.0),
+                               (9, "a e c l", 0.0),
+                               (10, "spark compile", 1.0),
+                               (11, "hadoop software", 0.0)
+                               ]) \
+        .map(lambda x: LabeledDocument(*x)).toDF()
 
     # Configure an ML pipeline, which consists of tree stages: tokenizer, hashingTF, and lr.
     tokenizer = Tokenizer(inputCol="text", outputCol="words")
@@ -82,18 +80,17 @@ if __name__ == "__main__":
     cvModel = crossval.fit(training)
 
     # Prepare test documents, which are unlabeled.
-    test = spark.createDataFrame([
-        (4L, "spark i j k"),
-        (5L, "l m n"),
-        (6L, "mapreduce spark"),
-        (7L, "apache hadoop")
-    ], ["id", "text"])
+    Document = Row("id", "text")
+    test = sc.parallelize([(4L, "spark i j k"),
+                           (5L, "l m n"),
+                           (6L, "mapreduce spark"),
+                           (7L, "apache hadoop")]) \
+        .map(lambda x: Document(*x)).toDF()
 
     # Make predictions on test documents. cvModel uses the best model found (lrModel).
     prediction = cvModel.transform(test)
     selected = prediction.select("id", "text", "probability", "prediction")
     for row in selected.collect():
         print(row)
-    # $example off$
 
-    spark.stop()
+    sc.stop()

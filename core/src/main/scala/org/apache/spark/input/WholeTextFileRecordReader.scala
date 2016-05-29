@@ -17,14 +17,17 @@
 
 package org.apache.spark.input
 
+import org.apache.hadoop.conf.{Configuration, Configurable => HConfigurable}
 import com.google.common.io.{ByteStreams, Closeables}
-import org.apache.hadoop.conf.{Configurable => HConfigurable, Configuration}
+
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.io.compress.CompressionCodecFactory
 import org.apache.hadoop.mapreduce.InputSplit
+import org.apache.hadoop.mapreduce.lib.input.{CombineFileSplit, CombineFileRecordReader}
 import org.apache.hadoop.mapreduce.RecordReader
 import org.apache.hadoop.mapreduce.TaskAttemptContext
-import org.apache.hadoop.mapreduce.lib.input.{CombineFileRecordReader, CombineFileSplit}
+import org.apache.spark.deploy.SparkHadoopUtil
+
 
 /**
  * A trait to implement [[org.apache.hadoop.conf.Configurable Configurable]] interface.
@@ -49,7 +52,8 @@ private[spark] class WholeTextFileRecordReader(
   extends RecordReader[Text, Text] with Configurable {
 
   private[this] val path = split.getPath(index)
-  private[this] val fs = path.getFileSystem(context.getConfiguration)
+  private[this] val fs = path.getFileSystem(
+    SparkHadoopUtil.get.getConfigurationFromJobContext(context))
 
   // True means the current file has been processed, then skip it.
   private[this] var processed = false

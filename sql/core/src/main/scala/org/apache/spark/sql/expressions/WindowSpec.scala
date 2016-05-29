@@ -18,8 +18,10 @@
 package org.apache.spark.sql.expressions
 
 import org.apache.spark.annotation.Experimental
-import org.apache.spark.sql.{catalyst, Column}
+import org.apache.spark.sql.{Column, catalyst}
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.aggregate._
+
 
 /**
  * :: Experimental ::
@@ -39,7 +41,7 @@ class WindowSpec private[sql](
    * Defines the partitioning columns in a [[WindowSpec]].
    * @since 1.4.0
    */
-  @_root_.scala.annotation.varargs
+  @scala.annotation.varargs
   def partitionBy(colName: String, colNames: String*): WindowSpec = {
     partitionBy((colName +: colNames).map(Column(_)): _*)
   }
@@ -48,7 +50,7 @@ class WindowSpec private[sql](
    * Defines the partitioning columns in a [[WindowSpec]].
    * @since 1.4.0
    */
-  @_root_.scala.annotation.varargs
+  @scala.annotation.varargs
   def partitionBy(cols: Column*): WindowSpec = {
     new WindowSpec(cols.map(_.expr), orderSpec, frame)
   }
@@ -57,7 +59,7 @@ class WindowSpec private[sql](
    * Defines the ordering columns in a [[WindowSpec]].
    * @since 1.4.0
    */
-  @_root_.scala.annotation.varargs
+  @scala.annotation.varargs
   def orderBy(colName: String, colNames: String*): WindowSpec = {
     orderBy((colName +: colNames).map(Column(_)): _*)
   }
@@ -66,7 +68,7 @@ class WindowSpec private[sql](
    * Defines the ordering columns in a [[WindowSpec]].
    * @since 1.4.0
    */
-  @_root_.scala.annotation.varargs
+  @scala.annotation.varargs
   def orderBy(cols: Column*): WindowSpec = {
     val sortOrder: Seq[SortOrder] = cols.map { col =>
       col.expr match {
@@ -138,7 +140,57 @@ class WindowSpec private[sql](
    * Converts this [[WindowSpec]] into a [[Column]] with an aggregate expression.
    */
   private[sql] def withAggregate(aggregate: Column): Column = {
-    val spec = WindowSpecDefinition(partitionSpec, orderSpec, frame)
-    new Column(WindowExpression(aggregate.expr, spec))
+    val windowExpr = aggregate.expr match {
+      // First, we check if we get an aggregate function without the DISTINCT keyword.
+      // Right now, we do not support using a DISTINCT aggregate function as a
+      // window function.
+      case AggregateExpression(aggregateFunction, _, isDistinct) if !isDistinct =>
+        aggregateFunction match {
+          case Average(child) => WindowExpression(
+            UnresolvedWindowFunction("avg", child :: Nil),
+            WindowSpecDefinition(partitionSpec, orderSpec, frame))
+          case Sum(child) => WindowExpression(
+            UnresolvedWindowFunction("sum", child :: Nil),
+            WindowSpecDefinition(partitionSpec, orderSpec, frame))
+          case Count(children) => WindowExpression(
+            UnresolvedWindowFunction("count", children),
+            WindowSpecDefinition(partitionSpec, orderSpec, frame))
+          case First(child, ignoreNulls) => WindowExpression(
+            // TODO this is a hack for Hive UDAF first_value
+            UnresolvedWindowFunction(
+              "first_value",
+              child :: ignoreNulls :: Nil),
+            WindowSpecDefinition(partitionSpec, orderSpec, frame))
+          case Last(child, ignoreNulls) => WindowExpression(
+            // TODO this is a hack for Hive UDAF last_value
+            UnresolvedWindowFunction(
+              "last_value",
+              child :: ignoreNulls :: Nil),
+            WindowSpecDefinition(partitionSpec, orderSpec, frame))
+          case Min(child) => WindowExpression(
+            UnresolvedWindowFunction("min", child :: Nil),
+            WindowSpecDefinition(partitionSpec, orderSpec, frame))
+          case Max(child) => WindowExpression(
+            UnresolvedWindowFunction("max", child :: Nil),
+            WindowSpecDefinition(partitionSpec, orderSpec, frame))
+          case x =>
+            throw new UnsupportedOperationException(s"$x is not supported in a window operation.")
+        }
+
+      case AggregateExpression(aggregateFunction, _, isDistinct) if isDistinct =>
+        throw new UnsupportedOperationException(
+          s"Distinct aggregate function ${aggregateFunction} is not supported " +
+            s"in window operation.")
+
+      case wf: WindowFunction =>
+        WindowExpression(
+          wf,
+          WindowSpecDefinition(partitionSpec, orderSpec, frame))
+
+      case x =>
+        throw new UnsupportedOperationException(s"$x is not supported in a window operation.")
+    }
+
+    new Column(windowExpr)
   }
 }

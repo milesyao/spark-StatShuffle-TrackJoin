@@ -21,17 +21,17 @@ package org.apache.spark.examples.ml
 // $example on$
 import org.apache.spark.ml.feature.NGram
 // $example off$
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 object NGramExample {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("NGramExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("NGramExample")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
 
     // $example on$
-    val wordDataFrame = spark.createDataFrame(Seq(
+    val wordDataFrame = sqlContext.createDataFrame(Seq(
       (0, Array("Hi", "I", "heard", "about", "Spark")),
       (1, Array("I", "wish", "Java", "could", "use", "case", "classes")),
       (2, Array("Logistic", "regression", "models", "are", "neat"))
@@ -41,8 +41,7 @@ object NGramExample {
     val ngramDataFrame = ngram.transform(wordDataFrame)
     ngramDataFrame.take(3).map(_.getAs[Stream[String]]("ngrams").toList).foreach(println)
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

@@ -23,9 +23,8 @@ import org.apache.curator.framework.CuratorFramework
 import org.apache.zookeeper.CreateMode
 import org.apache.zookeeper.KeeperException.NoNodeException
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{Logging, SparkConf}
 import org.apache.spark.deploy.SparkCuratorUtil
-import org.apache.spark.internal.Logging
 import org.apache.spark.util.Utils
 
 /**
@@ -54,9 +53,9 @@ private[spark] trait MesosClusterPersistenceEngine {
  * all of them reuses the same connection pool.
  */
 private[spark] class ZookeeperMesosClusterPersistenceEngineFactory(conf: SparkConf)
-  extends MesosClusterPersistenceEngineFactory(conf) with Logging {
+  extends MesosClusterPersistenceEngineFactory(conf) {
 
-  lazy val zk = SparkCuratorUtil.newClient(conf)
+  lazy val zk = SparkCuratorUtil.newClient(conf, "spark.mesos.deploy.zookeeper.url")
 
   def createEngine(path: String): MesosClusterPersistenceEngine = {
     new ZookeeperMesosClusterPersistenceEngine(path, zk, conf)
@@ -121,10 +120,11 @@ private[spark] class ZookeeperMesosClusterPersistenceEngine(
       Some(Utils.deserialize[T](fileData))
     } catch {
       case e: NoNodeException => None
-      case e: Exception =>
+      case e: Exception => {
         logWarning("Exception while reading persisted file, deleting", e)
         zk.delete().forPath(zkPath)
         None
+      }
     }
   }
 

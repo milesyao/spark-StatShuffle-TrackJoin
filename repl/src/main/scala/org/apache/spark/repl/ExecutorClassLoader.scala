@@ -17,9 +17,8 @@
 
 package org.apache.spark.repl
 
-import java.io.{ByteArrayOutputStream, FilterInputStream, InputStream, IOException}
+import java.io.{IOException, ByteArrayOutputStream, InputStream}
 import java.net.{HttpURLConnection, URI, URL, URLEncoder}
-import java.nio.channels.Channels
 
 import scala.util.control.NonFatal
 
@@ -27,10 +26,10 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.xbean.asm5._
 import org.apache.xbean.asm5.Opcodes._
 
-import org.apache.spark.{SparkConf, SparkEnv}
+import org.apache.spark.{SparkConf, SparkEnv, Logging}
 import org.apache.spark.deploy.SparkHadoopUtil
-import org.apache.spark.internal.Logging
-import org.apache.spark.util.{ParentClassLoader, Utils}
+import org.apache.spark.util.Utils
+import org.apache.spark.util.ParentClassLoader
 
 /**
  * A ClassLoader that reads classes from a Hadoop FileSystem or HTTP URI,
@@ -39,11 +38,7 @@ import org.apache.spark.util.{ParentClassLoader, Utils}
  * This class loader delegates getting/finding resources to parent loader,
  * which makes sense until REPL never provide resource dynamically.
  */
-class ExecutorClassLoader(
-    conf: SparkConf,
-    env: SparkEnv,
-    classUri: String,
-    parent: ClassLoader,
+class ExecutorClassLoader(conf: SparkConf, classUri: String, parent: ClassLoader,
     userClassPathFirst: Boolean) extends ClassLoader with Logging {
   val uri = new URI(classUri)
   val directory = uri.getPath
@@ -53,12 +48,13 @@ class ExecutorClassLoader(
   // Allows HTTP connect and read timeouts to be controlled for testing / debugging purposes
   private[repl] var httpUrlConnectionTimeoutMillis: Int = -1
 
-  private val fetchFn: (String) => InputStream = uri.getScheme() match {
-    case "spark" => getClassFileInputStreamFromSparkRPC
-    case "http" | "https" | "ftp" => getClassFileInputStreamFromHttpServer
-    case _ =>
-      val fileSystem = FileSystem.get(uri, SparkHadoopUtil.get.newConfiguration(conf))
-      getClassFileInputStreamFromFileSystem(fileSystem)
+  // Hadoop FileSystem object for our URI, if it isn't using HTTP
+  var fileSystem: FileSystem = {
+    if (Set("http", "https", "ftp").contains(uri.getScheme)) {
+      null
+    } else {
+      FileSystem.get(uri, SparkHadoopUtil.get.newConfiguration(conf))
+    }
   }
 
   override def getResource(name: String): URL = {
@@ -70,45 +66,25 @@ class ExecutorClassLoader(
   }
 
   override def findClass(name: String): Class[_] = {
-    if (userClassPathFirst) {
-      findClassLocally(name).getOrElse(parentLoader.loadClass(name))
-    } else {
-      try {
-        parentLoader.loadClass(name)
-      } catch {
-        case e: ClassNotFoundException =>
-          val classOption = findClassLocally(name)
-          classOption match {
-            case None =>
-              // If this class has a cause, it will break the internal assumption of Janino
-              // (the compiler used for Spark SQL code-gen).
-              // See org.codehaus.janino.ClassLoaderIClassLoader's findIClass, you will see
-              // its behavior will be changed if there is a cause and the compilation
-              // of generated class will fail.
-              throw new ClassNotFoundException(name)
-            case Some(a) => a
-          }
-      }
-    }
-  }
-
-  private def getClassFileInputStreamFromSparkRPC(path: String): InputStream = {
-    val channel = env.rpcEnv.openChannel(s"$classUri/$path")
-    new FilterInputStream(Channels.newInputStream(channel)) {
-
-      override def read(): Int = toClassNotFound(super.read())
-
-      override def read(b: Array[Byte]): Int = toClassNotFound(super.read(b))
-
-      override def read(b: Array[Byte], offset: Int, len: Int) =
-        toClassNotFound(super.read(b, offset, len))
-
-      private def toClassNotFound(fn: => Int): Int = {
+    userClassPathFirst match {
+      case true => findClassLocally(name).getOrElse(parentLoader.loadClass(name))
+      case false => {
         try {
-          fn
+          parentLoader.loadClass(name)
         } catch {
-          case e: Exception =>
-            throw new ClassNotFoundException(path, e)
+          case e: ClassNotFoundException => {
+            val classOption = findClassLocally(name)
+            classOption match {
+              case None =>
+                // If this class has a cause, it will break the internal assumption of Janino
+                // (the compiler used for Spark SQL code-gen).
+                // See org.codehaus.janino.ClassLoaderIClassLoader's findIClass, you will see
+                // its behavior will be changed if there is a cause and the compilation
+                // of generated class will fail.
+                throw new ClassNotFoundException(name)
+              case Some(a) => a
+            }
+          }
         }
       }
     }
@@ -150,8 +126,7 @@ class ExecutorClassLoader(
     }
   }
 
-  private def getClassFileInputStreamFromFileSystem(fileSystem: FileSystem)(
-      pathInDirectory: String): InputStream = {
+  private def getClassFileInputStreamFromFileSystem(pathInDirectory: String): InputStream = {
     val path = new Path(directory, pathInDirectory)
     if (fileSystem.exists(path)) {
       fileSystem.open(path)
@@ -164,7 +139,13 @@ class ExecutorClassLoader(
     val pathInDirectory = name.replace('.', '/') + ".class"
     var inputStream: InputStream = null
     try {
-      inputStream = fetchFn(pathInDirectory)
+      inputStream = {
+        if (fileSystem != null) {
+          getClassFileInputStreamFromFileSystem(pathInDirectory)
+        } else {
+          getClassFileInputStreamFromHttpServer(pathInDirectory)
+        }
+      }
       val bytes = readAndTransformClass(name, inputStream)
       Some(defineClass(name, bytes, 0, bytes.length))
     } catch {

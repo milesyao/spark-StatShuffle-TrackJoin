@@ -38,19 +38,14 @@ class UISeleniumSuite
   implicit var webDriver: WebDriver = _
 
   override def beforeAll(): Unit = {
-    super.beforeAll()
     webDriver = new HtmlUnitDriver {
       getWebClient.setCssErrorHandler(new SparkUICssErrorHandler)
     }
   }
 
   override def afterAll(): Unit = {
-    try {
-      if (webDriver != null) {
-        webDriver.quit()
-      }
-    } finally {
-      super.afterAll()
+    if (webDriver != null) {
+      webDriver.quit()
     }
   }
 
@@ -161,17 +156,17 @@ class UISeleniumSuite
         jobLinks.size should be (4)
 
         // Check stage progress
-        findAll(cssSelector(""".stage-progress-cell""")).map(_.text).toList should be (
-          List("1/1", "1/1", "1/1", "0/1 (1 failed)"))
+        findAll(cssSelector(""".stage-progress-cell""")).map(_.text).toSeq should be
+          (List("1/1", "1/1", "1/1", "0/1 (1 failed)"))
 
         // Check job progress
-        findAll(cssSelector(""".progress-cell""")).map(_.text).toList should be (
-          List("4/4", "4/4", "4/4", "0/4 (1 failed)"))
+        findAll(cssSelector(""".progress-cell""")).map(_.text).toSeq should be
+          (List("1/1", "1/1", "1/1", "0/1 (1 failed)"))
 
         // Check stacktrace
-        val errorCells = findAll(cssSelector(""".stacktrace-details""")).map(_.underlying).toSeq
+        val errorCells = findAll(cssSelector(""".stacktrace-details""")).map(_.text).toSeq
         errorCells should have size 1
-        // Can't get the inner (invisible) text without running JS
+        errorCells(0) should include("java.lang.RuntimeException: Oops")
 
         // Check the job link in the batch page is right
         go to (jobLinks(0))

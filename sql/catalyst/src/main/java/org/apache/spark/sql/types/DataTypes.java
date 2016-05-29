@@ -201,7 +201,7 @@ public class DataTypes {
     if (fields == null) {
       throw new IllegalArgumentException("fields should not be null.");
     }
-    Set<String> distinctNames = new HashSet<>();
+    Set<String> distinctNames = new HashSet<String>();
     for (StructField field : fields) {
       if (field == null) {
         throw new IllegalArgumentException(

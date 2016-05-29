@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.execution.columnar
 
-import java.nio.{ByteBuffer, ByteOrder}
+import java.nio.{ByteOrder, ByteBuffer}
 
 import org.apache.spark.sql.catalyst.expressions.MutableRow
 

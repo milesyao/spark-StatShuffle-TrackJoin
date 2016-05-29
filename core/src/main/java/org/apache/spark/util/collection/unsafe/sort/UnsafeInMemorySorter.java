@@ -19,8 +19,6 @@ package org.apache.spark.util.collection.unsafe.sort;
 
 import java.util.Comparator;
 
-import org.apache.avro.reflect.Nullable;
-
 import org.apache.spark.memory.MemoryConsumer;
 import org.apache.spark.memory.TaskMemoryManager;
 import org.apache.spark.unsafe.Platform;
@@ -68,21 +66,8 @@ public final class UnsafeInMemorySorter {
 
   private final MemoryConsumer consumer;
   private final TaskMemoryManager memoryManager;
-  @Nullable
   private final Sorter<RecordPointerAndKeyPrefix, LongArray> sorter;
-  @Nullable
   private final Comparator<RecordPointerAndKeyPrefix> sortComparator;
-
-  /**
-   * If non-null, specifies the radix sort parameters and that radix sort will be used.
-   */
-  @Nullable
-  private final PrefixComparators.RadixSortSupport radixSortSupport;
-
-  /**
-   * Set to 2x for radix sort to reserve extra memory for sorting, otherwise 1x.
-   */
-  private final int memoryAllocationFactor;
 
   /**
    * Within this buffer, position {@code 2 * i} holds a pointer pointer to the record at
@@ -95,45 +80,26 @@ public final class UnsafeInMemorySorter {
    */
   private int pos = 0;
 
-  private long initialSize;
-
-  private long totalSortTimeNanos = 0L;
-
   public UnsafeInMemorySorter(
     final MemoryConsumer consumer,
     final TaskMemoryManager memoryManager,
     final RecordComparator recordComparator,
     final PrefixComparator prefixComparator,
-    int initialSize,
-    boolean canUseRadixSort) {
+    int initialSize) {
     this(consumer, memoryManager, recordComparator, prefixComparator,
-      consumer.allocateArray(initialSize * 2), canUseRadixSort);
+      consumer.allocateArray(initialSize * 2));
   }
 
   public UnsafeInMemorySorter(
-      final MemoryConsumer consumer,
+    final MemoryConsumer consumer,
       final TaskMemoryManager memoryManager,
       final RecordComparator recordComparator,
       final PrefixComparator prefixComparator,
-      LongArray array,
-      boolean canUseRadixSort) {
+      LongArray array) {
     this.consumer = consumer;
     this.memoryManager = memoryManager;
-    this.initialSize = array.size();
-    if (recordComparator != null) {
-      this.sorter = new Sorter<>(UnsafeSortDataFormat.INSTANCE);
-      this.sortComparator = new SortComparator(recordComparator, prefixComparator, memoryManager);
-      if (canUseRadixSort && prefixComparator instanceof PrefixComparators.RadixSortSupport) {
-        this.radixSortSupport = (PrefixComparators.RadixSortSupport)prefixComparator;
-      } else {
-        this.radixSortSupport = null;
-      }
-    } else {
-      this.sorter = null;
-      this.sortComparator = null;
-      this.radixSortSupport = null;
-    }
-    this.memoryAllocationFactor = this.radixSortSupport != null ? 2 : 1;
+    this.sorter = new Sorter<>(UnsafeSortDataFormat.INSTANCE);
+    this.sortComparator = new SortComparator(recordComparator, prefixComparator, memoryManager);
     this.array = array;
   }
 
@@ -148,10 +114,6 @@ public final class UnsafeInMemorySorter {
   }
 
   public void reset() {
-    if (consumer != null) {
-      consumer.freeArray(array);
-      this.array = consumer.allocateArray(initialSize);
-    }
     pos = 0;
   }
 
@@ -162,19 +124,12 @@ public final class UnsafeInMemorySorter {
     return pos / 2;
   }
 
-  /**
-   * @return the total amount of time spent sorting data (in-memory only).
-   */
-  public long getSortTimeNanos() {
-    return totalSortTimeNanos;
-  }
-
   public long getMemoryUsage() {
-    return array.size() * 8;
+    return array.size() * 8L;
   }
 
   public boolean hasSpaceForAnotherRecord() {
-    return pos + 1 < (array.size() / memoryAllocationFactor);
+    return pos + 2 <= array.size();
   }
 
   public void expandPointerArray(LongArray newArray) {
@@ -186,7 +141,7 @@ public final class UnsafeInMemorySorter {
       array.getBaseOffset(),
       newArray.getBaseObject(),
       newArray.getBaseOffset(),
-      array.size() * (8 / memoryAllocationFactor));
+      array.size() * 8L);
     consumer.freeArray(array);
     array = newArray;
   }
@@ -208,24 +163,22 @@ public final class UnsafeInMemorySorter {
     pos++;
   }
 
-  public final class SortedIterator extends UnsafeSorterIterator implements Cloneable {
+  public final class SortedIterator extends UnsafeSorterIterator {
 
     private final int numRecords;
     private int position;
-    private int offset;
     private Object baseObject;
     private long baseOffset;
     private long keyPrefix;
     private int recordLength;
 
-    private SortedIterator(int numRecords, int offset) {
+    private SortedIterator(int numRecords) {
       this.numRecords = numRecords;
       this.position = 0;
-      this.offset = offset;
     }
 
-    public SortedIterator clone() {
-      SortedIterator iter = new SortedIterator(numRecords, offset);
+    public SortedIterator clone () {
+      SortedIterator iter = new SortedIterator(numRecords);
       iter.position = position;
       iter.baseObject = baseObject;
       iter.baseOffset = baseOffset;
@@ -235,23 +188,22 @@ public final class UnsafeInMemorySorter {
     }
 
     @Override
-    public int getNumRecords() {
-      return numRecords;
-    }
-
-    @Override
     public boolean hasNext() {
       return position / 2 < numRecords;
+    }
+
+    public int numRecordsLeft() {
+      return numRecords - position / 2;
     }
 
     @Override
     public void loadNext() {
       // This pointer points to a 4-byte record length, followed by the record's bytes
-      final long recordPointer = array.get(offset + position);
+      final long recordPointer = array.get(position);
       baseObject = memoryManager.getPage(recordPointer);
       baseOffset = memoryManager.getOffsetInPage(recordPointer) + 4;  // Skip over record length
       recordLength = Platform.getInt(baseObject, baseOffset - 4);
-      keyPrefix = array.get(offset + position + 1);
+      keyPrefix = array.get(position + 1);
       position += 2;
     }
 
@@ -273,19 +225,7 @@ public final class UnsafeInMemorySorter {
    * {@code next()} will return the same mutable object.
    */
   public SortedIterator getSortedIterator() {
-    int offset = 0;
-    long start = System.nanoTime();
-    if (sorter != null) {
-      if (this.radixSortSupport != null) {
-        // TODO(ekl) we should handle NULL values before radix sort for efficiency, since they
-        // force a full-width sort (and we cannot radix-sort nullable long fields at all).
-        offset = RadixSort.sortKeyPrefixArray(
-          array, pos / 2, 0, 7, radixSortSupport.sortDescending(), radixSortSupport.sortSigned());
-      } else {
-        sorter.sort(array, 0, pos / 2, sortComparator);
-      }
-    }
-    totalSortTimeNanos += System.nanoTime() - start;
-    return new SortedIterator(pos / 2, offset);
+    sorter.sort(array, 0, pos / 2, sortComparator);
+    return new SortedIterator(pos / 2);
   }
 }

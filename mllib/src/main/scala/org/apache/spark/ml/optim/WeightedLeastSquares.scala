@@ -17,10 +17,9 @@
 
 package org.apache.spark.ml.optim
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.Logging
 import org.apache.spark.ml.feature.Instance
-import org.apache.spark.ml.linalg._
-import org.apache.spark.mllib.linalg.CholeskyDecomposition
+import org.apache.spark.mllib.linalg._
 import org.apache.spark.rdd.RDD
 
 /**
@@ -32,12 +31,7 @@ import org.apache.spark.rdd.RDD
 private[ml] class WeightedLeastSquaresModel(
     val coefficients: DenseVector,
     val intercept: Double,
-    val diagInvAtWA: DenseVector) extends Serializable {
-
-  def predict(features: Vector): Double = {
-    BLAS.dot(coefficients, features) + intercept
-  }
-}
+    val diagInvAtWA: DenseVector) extends Serializable
 
 /**
  * Weighted least squares solver via normal equation.
@@ -92,24 +86,6 @@ private[ml] class WeightedLeastSquares(
     val aaBar = summary.aaBar
     val aaValues = aaBar.values
 
-    if (bStd == 0) {
-      if (fitIntercept) {
-        logWarning(s"The standard deviation of the label is zero, so the coefficients will be " +
-          s"zeros and the intercept will be the mean of the label; as a result, " +
-          s"training is not needed.")
-        val coefficients = new DenseVector(Array.ofDim(k-1))
-        val intercept = bBar
-        val diagInvAtWA = new DenseVector(Array(0D))
-        return new WeightedLeastSquaresModel(coefficients, intercept, diagInvAtWA)
-      } else {
-        require(!(regParam > 0.0 && standardizeLabel),
-          "The standard deviation of the label is zero. " +
-            "Model cannot be regularized with standardization=true")
-        logWarning(s"The standard deviation of the label is zero. " +
-          "Consider setting fitIntercept=true.")
-      }
-    }
-
     // add regularization to diagonals
     var i = 0
     var j = 2
@@ -118,7 +94,8 @@ private[ml] class WeightedLeastSquares(
       if (standardizeFeatures) {
         lambda *= aVar(j - 2)
       }
-      if (standardizeLabel && bStd != 0) {
+      if (standardizeLabel) {
+        // TODO: handle the case when bStd = 0
         lambda /= bStd
       }
       aaValues(i) += lambda
@@ -158,12 +135,6 @@ private[ml] class WeightedLeastSquares(
 private[ml] object WeightedLeastSquares {
 
   /**
-   * In order to take the normal equation approach efficiently, [[WeightedLeastSquares]]
-   * only supports the number of features is no more than 4096.
-   */
-  val MAX_NUM_FEATURES: Int = 4096
-
-  /**
    * Aggregator to provide necessary summary statistics for solving [[WeightedLeastSquares]].
    */
   // TODO: consolidate aggregates for summary statistics
@@ -181,8 +152,8 @@ private[ml] object WeightedLeastSquares {
     private var aaSum: DenseVector = _
 
     private def init(k: Int): Unit = {
-      require(k <= MAX_NUM_FEATURES, "In order to take the normal equation approach efficiently, " +
-        s"we set the max number of features to $MAX_NUM_FEATURES but got $k.")
+      require(k <= 4096, "In order to take the normal equation approach efficiently, " +
+        s"we set the max number of features to 4096 but got $k.")
       this.k = k
       triK = k * (k + 1) / 2
       count = 0L

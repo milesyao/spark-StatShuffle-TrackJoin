@@ -24,6 +24,7 @@ class ArrayBasedMapData(val keyArray: ArrayData, val valueArray: ArrayData) exte
 
   override def copy(): MapData = new ArrayBasedMapData(keyArray.copy(), valueArray.copy())
 
+  // We need to check equality of map type in tests.
   override def equals(o: Any): Boolean = {
     if (!o.isInstanceOf[ArrayBasedMapData]) {
       return false
@@ -34,11 +35,11 @@ class ArrayBasedMapData(val keyArray: ArrayData, val valueArray: ArrayData) exte
       return false
     }
 
-    this.keyArray == other.keyArray && this.valueArray == other.valueArray
+    ArrayBasedMapData.toScalaMap(this) == ArrayBasedMapData.toScalaMap(other)
   }
 
   override def hashCode: Int = {
-    keyArray.hashCode() * 37 + valueArray.hashCode()
+    ArrayBasedMapData.toScalaMap(this).hashCode()
   }
 
   override def toString: String = {

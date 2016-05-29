@@ -18,15 +18,16 @@
 // scalastyle:off println
 package org.apache.spark.examples
 
-import breeze.linalg.{squaredDistance, DenseVector, Vector}
+import breeze.linalg.{Vector, DenseVector, squaredDistance}
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.SparkContext._
 
 /**
  * K-means clustering.
  *
  * This is an example implementation for learning how to use Spark. For more conventional use,
- * please refer to org.apache.spark.ml.clustering.KMeans.
+ * please refer to org.apache.spark.mllib.clustering.KMeans
  */
 object SparkKMeans {
 
@@ -52,7 +53,7 @@ object SparkKMeans {
   def showWarning() {
     System.err.println(
       """WARN: This is a naive implementation of KMeans Clustering and is given as an example!
-        |Please use org.apache.spark.ml.clustering.KMeans
+        |Please use the KMeans method found in org.apache.spark.mllib.clustering
         |for more conventional use.
       """.stripMargin)
   }
@@ -66,17 +67,14 @@ object SparkKMeans {
 
     showWarning()
 
-    val spark = SparkSession
-      .builder
-      .appName("SparkKMeans")
-      .getOrCreate()
-
-    val lines = spark.read.text(args(0)).rdd
+    val sparkConf = new SparkConf().setAppName("SparkKMeans")
+    val sc = new SparkContext(sparkConf)
+    val lines = sc.textFile(args(0))
     val data = lines.map(parseVector _).cache()
     val K = args(1).toInt
     val convergeDist = args(2).toDouble
 
-    val kPoints = data.takeSample(withReplacement = false, K, 42)
+    val kPoints = data.takeSample(withReplacement = false, K, 42).toArray
     var tempDist = 1.0
 
     while(tempDist > convergeDist) {
@@ -100,7 +98,7 @@ object SparkKMeans {
 
     println("Final centers:")
     kPoints.foreach(println)
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println

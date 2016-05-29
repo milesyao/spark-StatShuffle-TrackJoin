@@ -17,9 +17,9 @@
 
 package org.apache.spark.deploy.yarn
 
-import scala.collection.mutable.ArrayBuffer
-
-import org.apache.spark.util.{IntParam, MemoryParam}
+import org.apache.spark.util.{MemoryParam, IntParam}
+import org.apache.spark.deploy.yarn.YarnSparkHadoopUtil._
+import collection.mutable.ArrayBuffer
 
 class ApplicationMasterArguments(val args: Array[String]) {
   var userJar: String = null
@@ -27,6 +27,8 @@ class ApplicationMasterArguments(val args: Array[String]) {
   var primaryPyFile: String = null
   var primaryRFile: String = null
   var userArgs: Seq[String] = Nil
+  var executorMemory = 1024
+  var executorCores = 1
   var propertiesFile: String = null
 
   parseArgs(args.toList)
@@ -56,8 +58,16 @@ class ApplicationMasterArguments(val args: Array[String]) {
           primaryRFile = value
           args = tail
 
-        case ("--arg") :: value :: tail =>
+        case ("--args" | "--arg") :: value :: tail =>
           userArgsBuffer += value
+          args = tail
+
+        case ("--worker-memory" | "--executor-memory") :: MemoryParam(value) :: tail =>
+          executorMemory = value
+          args = tail
+
+        case ("--worker-cores" | "--executor-cores") :: IntParam(value) :: tail =>
+          executorCores = value
           args = tail
 
         case ("--properties-file") :: value :: tail =>
@@ -76,7 +86,7 @@ class ApplicationMasterArguments(val args: Array[String]) {
       System.exit(-1)
     }
 
-    userArgs = userArgsBuffer.toList
+    userArgs = userArgsBuffer.readOnly
   }
 
   def printUsageAndExit(exitCode: Int, unknownParam: Any = null) {
@@ -91,8 +101,12 @@ class ApplicationMasterArguments(val args: Array[String]) {
       |  --class CLASS_NAME   Name of your application's main class
       |  --primary-py-file    A main Python file
       |  --primary-r-file     A main R file
-      |  --arg ARG            Argument to be passed to your application's main class.
+      |  --py-files PY_FILES  Comma-separated list of .zip, .egg, or .py files to
+      |                       place on the PYTHONPATH for Python apps.
+      |  --args ARGS          Arguments to be passed to your application's main class.
       |                       Multiple invocations are possible, each will be passed in order.
+      |  --executor-cores NUM   Number of cores for the executors (Default: 1)
+      |  --executor-memory MEM  Memory per executor (e.g. 1000M, 2G) (Default: 1G)
       |  --properties-file FILE Path to a custom Spark properties file.
       """.stripMargin)
     // scalastyle:on println

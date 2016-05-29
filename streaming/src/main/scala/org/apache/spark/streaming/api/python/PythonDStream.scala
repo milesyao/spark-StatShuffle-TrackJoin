@@ -24,14 +24,17 @@ import java.util.{ArrayList => JArrayList, List => JList}
 import scala.collection.JavaConverters._
 import scala.language.existentials
 
+import py4j.GatewayServer
+
 import org.apache.spark.SparkException
 import org.apache.spark.api.java._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.streaming.{Duration, Interval, Time}
-import org.apache.spark.streaming.api.java._
+import org.apache.spark.streaming.{Interval, Duration, Time}
 import org.apache.spark.streaming.dstream._
+import org.apache.spark.streaming.api.java._
 import org.apache.spark.util.Utils
+
 
 /**
  * Interface for Python callback function which is used to transform RDDs
@@ -168,6 +171,16 @@ private[python] object PythonDStream {
   }
 
   /**
+   * Update the port of callback client to `port`
+   */
+  def updatePythonGatewayPort(gws: GatewayServer, port: Int): Unit = {
+    val cl = gws.getCallbackClient
+    val f = cl.getClass.getDeclaredField("port")
+    f.setAccessible(true)
+    f.setInt(cl, port)
+  }
+
+  /**
    * helper function for DStream.foreachRDD(),
    * cannot be `foreachRDD`, it will confusing py4j
    */
@@ -251,18 +264,8 @@ private[python] class PythonTransformed2DStream(
  */
 private[python] class PythonStateDStream(
     parent: DStream[Array[Byte]],
-    reduceFunc: PythonTransformFunction,
-    initialRDD: Option[RDD[Array[Byte]]])
+    reduceFunc: PythonTransformFunction)
   extends PythonDStream(parent, reduceFunc) {
-
-  def this(
-    parent: DStream[Array[Byte]],
-    reduceFunc: PythonTransformFunction) = this(parent, reduceFunc, None)
-
-  def this(
-    parent: DStream[Array[Byte]],
-    reduceFunc: PythonTransformFunction,
-    initialRDD: JavaRDD[Array[Byte]]) = this(parent, reduceFunc, Some(initialRDD.rdd))
 
   super.persist(StorageLevel.MEMORY_ONLY)
   override val mustCheckpoint = true
@@ -271,7 +274,7 @@ private[python] class PythonStateDStream(
     val lastState = getOrCompute(validTime - slideDuration)
     val rdd = parent.getOrCompute(validTime)
     if (rdd.isDefined) {
-      func(lastState.orElse(initialRDD), rdd, validTime)
+      func(lastState, rdd, validTime)
     } else {
       lastState
     }

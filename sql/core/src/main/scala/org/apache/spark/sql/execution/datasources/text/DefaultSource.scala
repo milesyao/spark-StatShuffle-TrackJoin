@@ -17,17 +17,23 @@
 
 package org.apache.spark.sql.execution.datasources.text
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, Path}
-import org.apache.hadoop.io.{NullWritable, Text}
-import org.apache.hadoop.mapreduce.{Job, RecordWriter, TaskAttemptContext}
+import com.google.common.base.Objects
+import org.apache.hadoop.fs.{Path, FileStatus}
+import org.apache.hadoop.io.{NullWritable, Text, LongWritable}
+import org.apache.hadoop.mapred.{TextInputFormat, JobConf}
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat
+import org.apache.hadoop.mapreduce.{RecordWriter, TaskAttemptContext, Job}
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.deploy.SparkHadoopUtil
+import org.apache.spark.mapred.SparkHadoopMapRedUtil
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
-import org.apache.spark.sql.catalyst.expressions.codegen.{BufferHolder, UnsafeRowWriter}
-import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeRowWriter, BufferHolder}
+import org.apache.spark.sql.{AnalysisException, Row, SQLContext}
+import org.apache.spark.sql.execution.datasources.PartitionSpec
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.SerializableConfiguration
@@ -35,7 +41,17 @@ import org.apache.spark.util.SerializableConfiguration
 /**
  * A data source for reading text files.
  */
-class DefaultSource extends FileFormat with DataSourceRegister {
+class DefaultSource extends HadoopFsRelationProvider with DataSourceRegister {
+
+  override def createRelation(
+      sqlContext: SQLContext,
+      paths: Array[String],
+      dataSchema: Option[StructType],
+      partitionColumns: Option[StructType],
+      parameters: Map[String, String]): HadoopFsRelation = {
+    dataSchema.foreach(verifySchema)
+    new TextRelation(None, dataSchema, partitionColumns, paths)(sqlContext)
+  }
 
   override def shortName(): String = "text"
 
@@ -50,79 +66,92 @@ class DefaultSource extends FileFormat with DataSourceRegister {
         s"Text data source supports only a string column, but you have ${tpe.simpleString}.")
     }
   }
+}
 
-  override def inferSchema(
-      sparkSession: SparkSession,
-      options: Map[String, String],
-      files: Seq[FileStatus]): Option[StructType] = Some(new StructType().add("value", StringType))
+private[sql] class TextRelation(
+    val maybePartitionSpec: Option[PartitionSpec],
+    val textSchema: Option[StructType],
+    override val userDefinedPartitionColumns: Option[StructType],
+    override val paths: Array[String] = Array.empty[String],
+    parameters: Map[String, String] = Map.empty[String, String])
+    (@transient val sqlContext: SQLContext)
+  extends HadoopFsRelation(maybePartitionSpec, parameters) {
 
-  override def prepareWrite(
-      sparkSession: SparkSession,
-      job: Job,
-      options: Map[String, String],
-      dataSchema: StructType): OutputWriterFactory = {
-    verifySchema(dataSchema)
+  /** Data schema is always a single column, named "value" if original Data source has no schema. */
+  override def dataSchema: StructType =
+    textSchema.getOrElse(new StructType().add("value", StringType))
+  /** This is an internal data source that outputs internal row format. */
+  override val needConversion: Boolean = false
 
-    val conf = job.getConfiguration
-    val compressionCodec = options.get("compression").map(CompressionCodecs.getCodecClassName)
-    compressionCodec.foreach { codec =>
-      CompressionCodecs.setCodecConfiguration(conf, codec)
+
+  override private[sql] def buildInternalScan(
+      requiredColumns: Array[String],
+      filters: Array[Filter],
+      inputPaths: Array[FileStatus],
+      broadcastedConf: Broadcast[SerializableConfiguration]): RDD[InternalRow] = {
+    val job = new Job(sqlContext.sparkContext.hadoopConfiguration)
+    val conf = SparkHadoopUtil.get.getConfigurationFromJobContext(job)
+    val paths = inputPaths.map(_.getPath).sortBy(_.toUri)
+
+    if (paths.nonEmpty) {
+      FileInputFormat.setInputPaths(job, paths: _*)
     }
 
+    sqlContext.sparkContext.hadoopRDD(
+      conf.asInstanceOf[JobConf], classOf[TextInputFormat], classOf[LongWritable], classOf[Text])
+      .mapPartitions { iter =>
+        val bufferHolder = new BufferHolder
+        val unsafeRowWriter = new UnsafeRowWriter
+        val unsafeRow = new UnsafeRow
+
+        iter.map { case (_, line) =>
+          // Writes to an UnsafeRow directly
+          bufferHolder.reset()
+          unsafeRowWriter.initialize(bufferHolder, 1)
+          unsafeRowWriter.write(0, line.getBytes, 0, line.getLength)
+          unsafeRow.pointTo(bufferHolder.buffer, 1, bufferHolder.totalSize())
+          unsafeRow
+        }
+      }
+  }
+
+  /** Write path. */
+  override def prepareJobForWrite(job: Job): OutputWriterFactory = {
     new OutputWriterFactory {
       override def newInstance(
           path: String,
-          bucketId: Option[Int],
           dataSchema: StructType,
           context: TaskAttemptContext): OutputWriter = {
-        if (bucketId.isDefined) {
-          throw new AnalysisException("Text doesn't support bucketing")
-        }
         new TextOutputWriter(path, dataSchema, context)
       }
     }
   }
 
-  override def buildReader(
-      sparkSession: SparkSession,
-      dataSchema: StructType,
-      partitionSchema: StructType,
-      requiredSchema: StructType,
-      filters: Seq[Filter],
-      options: Map[String, String],
-      hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
-    val broadcastedHadoopConf =
-      sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+  override def equals(other: Any): Boolean = other match {
+    case that: TextRelation =>
+      paths.toSet == that.paths.toSet && partitionColumns == that.partitionColumns
+    case _ => false
+  }
 
-    (file: PartitionedFile) => {
-      val unsafeRow = new UnsafeRow(1)
-      val bufferHolder = new BufferHolder(unsafeRow)
-      val unsafeRowWriter = new UnsafeRowWriter(bufferHolder, 1)
-
-      new HadoopFileLinesReader(file, broadcastedHadoopConf.value.value).map { line =>
-        // Writes to an UnsafeRow directly
-        bufferHolder.reset()
-        unsafeRowWriter.write(0, line.getBytes, 0, line.getLength)
-        unsafeRow.setTotalSize(bufferHolder.totalSize())
-        unsafeRow
-      }
-    }
+  override def hashCode(): Int = {
+    Objects.hashCode(paths.toSet, partitionColumns)
   }
 }
 
 class TextOutputWriter(path: String, dataSchema: StructType, context: TaskAttemptContext)
-  extends OutputWriter {
+  extends OutputWriter
+  with SparkHadoopMapRedUtil {
 
   private[this] val buffer = new Text()
 
   private val recordWriter: RecordWriter[NullWritable, Text] = {
     new TextOutputFormat[NullWritable, Text]() {
       override def getDefaultWorkFile(context: TaskAttemptContext, extension: String): Path = {
-        val configuration = context.getConfiguration
+        val configuration = SparkHadoopUtil.get.getConfigurationFromJobContext(context)
         val uniqueWriteJobId = configuration.get("spark.sql.sources.writeJobUUID")
-        val taskAttemptId = context.getTaskAttemptID
+        val taskAttemptId = SparkHadoopUtil.get.getTaskAttemptIDFromTaskAttemptContext(context)
         val split = taskAttemptId.getTaskID.getId
-        new Path(path, f"part-r-$split%05d-$uniqueWriteJobId.txt$extension")
+        new Path(path, f"part-r-$split%05d-$uniqueWriteJobId$extension")
       }
     }.getRecordWriter(context)
   }

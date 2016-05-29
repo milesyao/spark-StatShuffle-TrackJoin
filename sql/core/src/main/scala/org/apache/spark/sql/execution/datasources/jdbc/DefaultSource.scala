@@ -20,7 +20,7 @@ package org.apache.spark.sql.execution.datasources.jdbc
 import java.util.Properties
 
 import org.apache.spark.sql.SQLContext
-import org.apache.spark.sql.sources.{BaseRelation, DataSourceRegister, RelationProvider}
+import org.apache.spark.sql.sources.{BaseRelation, RelationProvider, DataSourceRegister}
 
 class DefaultSource extends RelationProvider with DataSourceRegister {
 
@@ -30,26 +30,30 @@ class DefaultSource extends RelationProvider with DataSourceRegister {
   override def createRelation(
       sqlContext: SQLContext,
       parameters: Map[String, String]): BaseRelation = {
-    val jdbcOptions = new JDBCOptions(parameters)
-    if (jdbcOptions.partitionColumn != null
-      && (jdbcOptions.lowerBound == null
-        || jdbcOptions.upperBound == null
-        || jdbcOptions.numPartitions == null)) {
+    val url = parameters.getOrElse("url", sys.error("Option 'url' not specified"))
+    val table = parameters.getOrElse("dbtable", sys.error("Option 'dbtable' not specified"))
+    val partitionColumn = parameters.getOrElse("partitionColumn", null)
+    val lowerBound = parameters.getOrElse("lowerBound", null)
+    val upperBound = parameters.getOrElse("upperBound", null)
+    val numPartitions = parameters.getOrElse("numPartitions", null)
+
+    if (partitionColumn != null
+      && (lowerBound == null || upperBound == null || numPartitions == null)) {
       sys.error("Partitioning incompletely specified")
     }
 
-    val partitionInfo = if (jdbcOptions.partitionColumn == null) {
+    val partitionInfo = if (partitionColumn == null) {
       null
     } else {
       JDBCPartitioningInfo(
-        jdbcOptions.partitionColumn,
-        jdbcOptions.lowerBound.toLong,
-        jdbcOptions.upperBound.toLong,
-        jdbcOptions.numPartitions.toInt)
+        partitionColumn,
+        lowerBound.toLong,
+        upperBound.toLong,
+        numPartitions.toInt)
     }
     val parts = JDBCRelation.columnPartition(partitionInfo)
     val properties = new Properties() // Additional properties that we will pass to getConnection
     parameters.foreach(kv => properties.setProperty(kv._1, kv._2))
-    JDBCRelation(jdbcOptions.url, jdbcOptions.table, parts, properties)(sqlContext.sparkSession)
+    JDBCRelation(url, table, parts, properties)(sqlContext)
   }
 }

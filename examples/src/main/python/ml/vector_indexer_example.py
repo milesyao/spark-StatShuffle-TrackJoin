@@ -17,19 +17,18 @@
 
 from __future__ import print_function
 
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
 # $example on$
 from pyspark.ml.feature import VectorIndexer
 # $example off$
-from pyspark.sql import SparkSession
 
 if __name__ == "__main__":
-    spark = SparkSession\
-        .builder\
-        .appName("VectorIndexerExample")\
-        .getOrCreate()
+    sc = SparkContext(appName="VectorIndexerExample")
+    sqlContext = SQLContext(sc)
 
     # $example on$
-    data = spark.read.format("libsvm").load("data/mllib/sample_libsvm_data.txt")
+    data = sqlContext.read.format("libsvm").load("data/mllib/sample_libsvm_data.txt")
     indexer = VectorIndexer(inputCol="features", outputCol="indexed", maxCategories=10)
     indexerModel = indexer.fit(data)
 
@@ -38,4 +37,4 @@ if __name__ == "__main__":
     indexedData.show()
     # $example off$
 
-    spark.stop()
+    sc.stop()

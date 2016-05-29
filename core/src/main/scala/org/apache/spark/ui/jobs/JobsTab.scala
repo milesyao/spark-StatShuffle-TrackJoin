@@ -29,9 +29,7 @@ private[ui] class JobsTab(parent: SparkUI) extends SparkUITab(parent, "jobs") {
   val operationGraphListener = parent.operationGraphListener
 
   def isFairScheduler: Boolean =
-    jobProgresslistener.schedulingMode == Some(SchedulingMode.FAIR)
-
-  def getSparkUser: String = parent.getSparkUser
+    jobProgresslistener.schedulingMode.exists(_ == SchedulingMode.FAIR)
 
   attachPage(new AllJobsPage(this))
   attachPage(new JobPage(this))

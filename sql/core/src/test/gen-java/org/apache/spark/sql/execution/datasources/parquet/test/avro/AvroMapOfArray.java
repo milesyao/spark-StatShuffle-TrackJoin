@@ -129,7 +129,6 @@ public class AvroMapOfArray extends org.apache.avro.specific.SpecificRecordBase 
     }
 
     @Override
-    @SuppressWarnings(value="unchecked")
     public AvroMapOfArray build() {
       try {
         AvroMapOfArray record = new AvroMapOfArray();

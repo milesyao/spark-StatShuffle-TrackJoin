@@ -19,13 +19,12 @@ package org.apache.spark.storage
 
 import scala.collection.Iterable
 import scala.collection.generic.CanBuildFrom
-import scala.concurrent.Future
+import scala.concurrent.{Await, Future}
 
-import org.apache.spark.{SparkConf, SparkException}
-import org.apache.spark.internal.Logging
 import org.apache.spark.rpc.RpcEndpointRef
+import org.apache.spark.{Logging, SparkConf, SparkException}
 import org.apache.spark.storage.BlockManagerMessages._
-import org.apache.spark.util.{RpcUtils, ThreadUtils}
+import org.apache.spark.util.{ThreadUtils, RpcUtils}
 
 private[spark]
 class BlockManagerMaster(
@@ -55,9 +54,11 @@ class BlockManagerMaster(
       blockId: BlockId,
       storageLevel: StorageLevel,
       memSize: Long,
-      diskSize: Long): Boolean = {
+      diskSize: Long,
+      externalBlockStoreSize: Long): Boolean = {
     val res = driverEndpoint.askWithRetry[Boolean](
-      UpdateBlockInfo(blockManagerId, blockId, storageLevel, memSize, diskSize))
+      UpdateBlockInfo(blockManagerId, blockId, storageLevel,
+        memSize, diskSize, externalBlockStoreSize))
     logDebug(s"Updated info of block $blockId")
     res
   }

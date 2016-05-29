@@ -22,14 +22,12 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.annotation.{Experimental, Since}
 import org.apache.spark.ml._
 import org.apache.spark.ml.attribute.{AttributeGroup, _}
-import org.apache.spark.ml.linalg.{Vector, VectorUDT}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.util._
 import org.apache.spark.mllib.feature
-import org.apache.spark.mllib.linalg.{Vectors => OldVectors}
-import org.apache.spark.mllib.regression.{LabeledPoint => OldLabeledPoint}
-import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.linalg.{Vector, VectorUDT}
+import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{DoubleType, StructField, StructType}
@@ -79,21 +77,19 @@ final class ChiSqSelector(override val uid: String)
   /** @group setParam */
   def setLabelCol(value: String): this.type = set(labelCol, value)
 
-  @Since("2.0.0")
-  override def fit(dataset: Dataset[_]): ChiSqSelectorModel = {
+  override def fit(dataset: DataFrame): ChiSqSelectorModel = {
     transformSchema(dataset.schema, logging = true)
-    val input: RDD[OldLabeledPoint] =
-      dataset.select(col($(labelCol)).cast(DoubleType), col($(featuresCol))).rdd.map {
-        case Row(label: Double, features: Vector) =>
-          OldLabeledPoint(label, OldVectors.fromML(features))
-      }
+    val input = dataset.select($(labelCol), $(featuresCol)).map {
+      case Row(label: Double, features: Vector) =>
+        LabeledPoint(label, features)
+    }
     val chiSqSelector = new feature.ChiSqSelector($(numTopFeatures)).fit(input)
     copyValues(new ChiSqSelectorModel(uid, chiSqSelector).setParent(this))
   }
 
   override def transformSchema(schema: StructType): StructType = {
     SchemaUtils.checkColumnType(schema, $(featuresCol), new VectorUDT)
-    SchemaUtils.checkNumericType(schema, $(labelCol))
+    SchemaUtils.checkColumnType(schema, $(labelCol), DoubleType)
     SchemaUtils.appendColumn(schema, $(outputCol), new VectorUDT)
   }
 
@@ -131,15 +127,10 @@ final class ChiSqSelectorModel private[ml] (
   /** @group setParam */
   def setLabelCol(value: String): this.type = set(labelCol, value)
 
-  @Since("2.0.0")
-  override def transform(dataset: Dataset[_]): DataFrame = {
+  override def transform(dataset: DataFrame): DataFrame = {
     val transformedSchema = transformSchema(dataset.schema, logging = true)
     val newField = transformedSchema.last
-
-    // TODO: Make the transformer natively in ml framework to avoid extra conversion.
-    val transformer: Vector => Vector = v => chiSqSelector.transform(OldVectors.fromML(v)).asML
-
-    val selector = udf(transformer)
+    val selector = udf { chiSqSelector.transform _ }
     dataset.withColumn($(outputCol), selector(col($(featuresCol))), newField.metadata)
   }
 

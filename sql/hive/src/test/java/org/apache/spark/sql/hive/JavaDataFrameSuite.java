@@ -36,11 +36,11 @@ import org.apache.spark.sql.hive.aggregate.MyDoubleSum;
 
 public class JavaDataFrameSuite {
   private transient JavaSparkContext sc;
-  private transient SQLContext hc;
+  private transient HiveContext hc;
 
-  Dataset<Row> df;
+  DataFrame df;
 
-  private static void checkAnswer(Dataset<Row> actual, List<Row> expected) {
+  private static void checkAnswer(DataFrame actual, List<Row> expected) {
     String errorMessage = QueryTest$.MODULE$.checkAnswer(actual, expected);
     if (errorMessage != null) {
       Assert.fail(errorMessage);
@@ -57,7 +57,7 @@ public class JavaDataFrameSuite {
       jsonObjects.add("{\"key\":" + i + ", \"value\":\"str" + i + "\"}");
     }
     df = hc.read().json(sc.parallelize(jsonObjects));
-    df.createOrReplaceTempView("window_table");
+    df.registerTempTable("window_table");
   }
 
   @After
@@ -82,12 +82,12 @@ public class JavaDataFrameSuite {
 
   @Test
   public void testUDAF() {
-    Dataset<Row> df = hc.range(0, 100).union(hc.range(0, 100)).select(col("id").as("value"));
+    DataFrame df = hc.range(0, 100).unionAll(hc.range(0, 100)).select(col("id").as("value"));
     UserDefinedAggregateFunction udaf = new MyDoubleSum();
     UserDefinedAggregateFunction registeredUDAF = hc.udf().register("mydoublesum", udaf);
     // Create Columns for the UDAF. For now, callUDF does not take an argument to specific if
     // we want to use distinct aggregation.
-    Dataset<Row> aggregatedDF =
+    DataFrame aggregatedDF =
       df.groupBy()
         .agg(
           udaf.distinct(col("value")),

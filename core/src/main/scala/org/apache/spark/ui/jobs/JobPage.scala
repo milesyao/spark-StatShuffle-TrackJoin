@@ -18,12 +18,11 @@
 package org.apache.spark.ui.jobs
 
 import java.util.Date
-import javax.servlet.http.HttpServletRequest
 
 import scala.collection.mutable.{Buffer, HashMap, ListBuffer}
-import scala.xml.{Node, NodeSeq, Unparsed, Utility}
+import scala.xml.{NodeSeq, Node, Unparsed, Utility}
 
-import org.apache.commons.lang3.StringEscapeUtils
+import javax.servlet.http.HttpServletRequest
 
 import org.apache.spark.JobExecutionStatus
 import org.apache.spark.scheduler.StageInfo
@@ -65,10 +64,9 @@ private[ui] class JobPage(parent: JobsTab) extends WebUIPage("job") {
       val submissionTime = stage.submissionTime.get
       val completionTime = stage.completionTime.getOrElse(System.currentTimeMillis())
 
-      // The timeline library treats contents as HTML, so we have to escape them. We need to add
-      // extra layers of escaping in order to embed this in a Javascript string literal.
+      // The timeline library treats contents as HTML, so we have to escape them; for the
+      // data-title attribute string we have to escape them twice since that's in a string.
       val escapedName = Utility.escape(name)
-      val jsEscapedName = StringEscapeUtils.escapeEcmaScript(escapedName)
       s"""
          |{
          |  'className': 'stage job-timeline-object ${status}',
@@ -77,7 +75,7 @@ private[ui] class JobPage(parent: JobsTab) extends WebUIPage("job") {
          |  'end': new Date(${completionTime}),
          |  'content': '<div class="job-timeline-content" data-toggle="tooltip"' +
          |   'data-placement="top" data-html="true"' +
-         |   'data-title="${jsEscapedName} (Stage ${stageId}.${attemptId})<br>' +
+         |   'data-title="${Utility.escape(escapedName)} (Stage ${stageId}.${attemptId})<br>' +
          |   'Status: ${status.toUpperCase}<br>' +
          |   'Submitted: ${UIUtils.formatDate(new Date(submissionTime))}' +
          |   '${
@@ -87,7 +85,7 @@ private[ui] class JobPage(parent: JobsTab) extends WebUIPage("job") {
                    ""
                  }
               }">' +
-         |    '${jsEscapedName} (Stage ${stageId}.${attemptId})</div>',
+         |    '${escapedName} (Stage ${stageId}.${attemptId})</div>',
          |}
        """.stripMargin
     }
@@ -125,7 +123,7 @@ private[ui] class JobPage(parent: JobsTab) extends WebUIPage("job") {
                |    'Removed at ${UIUtils.formatDate(new Date(event.finishTime.get))}' +
                |    '${
                         if (event.finishReason.isDefined) {
-                          s"""<br>Reason: ${event.finishReason.get.replace("\n", " ")}"""
+                          s"""<br>Reason: ${event.finishReason.get}"""
                         } else {
                           ""
                         }
@@ -179,8 +177,7 @@ private[ui] class JobPage(parent: JobsTab) extends WebUIPage("job") {
       </div>
     </div> ++
     <script type="text/javascript">
-      {Unparsed(s"drawJobTimeline(${groupJsonArrayAsStr}, ${eventArrayAsStr}, " +
-      s"${appStartTime}, ${UIUtils.getTimeZoneOffset()});")}
+      {Unparsed(s"drawJobTimeline(${groupJsonArrayAsStr}, ${eventArrayAsStr}, ${appStartTime});")}
     </script>
   }
 

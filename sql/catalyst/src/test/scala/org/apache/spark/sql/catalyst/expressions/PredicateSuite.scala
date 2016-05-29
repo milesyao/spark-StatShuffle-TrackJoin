@@ -273,8 +273,7 @@ class PredicateSuite extends SparkFunSuite with ExpressionEvalHelper {
   }
 
   test("BinaryComparison: null test") {
-    // Use -1 (default value for codegen) which can trigger some weird bugs, e.g. SPARK-14757
-    val normalInt = Literal(-1)
+    val normalInt = Literal(1)
     val nullInt = Literal.create(null, IntegerType)
 
     def nullTest(op: (Expression, Expression) => Expression): Unit = {

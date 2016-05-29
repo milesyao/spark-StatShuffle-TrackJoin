@@ -24,9 +24,8 @@ import scala.reflect.ClassTag
 
 import com.google.common.io.ByteStreams
 
-import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
+import org.apache.spark.serializer.{SerializationStream, DeserializationStream, SerializerInstance, Serializer}
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
-import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.unsafe.Platform
 
 /**
@@ -40,17 +39,12 @@ import org.apache.spark.unsafe.Platform
  *
  * @param numFields the number of fields in the row being serialized.
  */
-private[sql] class UnsafeRowSerializer(
-    numFields: Int,
-    dataSize: SQLMetric = null) extends Serializer with Serializable {
-  override def newInstance(): SerializerInstance =
-    new UnsafeRowSerializerInstance(numFields, dataSize)
+private[sql] class UnsafeRowSerializer(numFields: Int) extends Serializer with Serializable {
+  override def newInstance(): SerializerInstance = new UnsafeRowSerializerInstance(numFields)
   override private[spark] def supportsRelocationOfSerializedObjects: Boolean = true
 }
 
-private class UnsafeRowSerializerInstance(
-    numFields: Int,
-    dataSize: SQLMetric) extends SerializerInstance {
+private class UnsafeRowSerializerInstance(numFields: Int) extends SerializerInstance {
   /**
    * Serializes a stream of UnsafeRows. Within the stream, each record consists of a record
    * length (stored as a 4-byte integer, written high byte first), followed by the record's bytes.
@@ -62,9 +56,7 @@ private class UnsafeRowSerializerInstance(
 
     override def writeValue[T: ClassTag](value: T): SerializationStream = {
       val row = value.asInstanceOf[UnsafeRow]
-      if (dataSize != null) {
-        dataSize.add(row.getSizeInBytes)
-      }
+
       dOut.writeInt(row.getSizeInBytes)
       row.writeToStream(dOut, writeBuffer)
       this
@@ -102,7 +94,7 @@ private class UnsafeRowSerializerInstance(
       private[this] val dIn: DataInputStream = new DataInputStream(new BufferedInputStream(in))
       // 1024 is a default buffer size; this buffer will grow to accommodate larger rows
       private[this] var rowBuffer: Array[Byte] = new Array[Byte](1024)
-      private[this] var row: UnsafeRow = new UnsafeRow(numFields)
+      private[this] var row: UnsafeRow = new UnsafeRow()
       private[this] var rowTuple: (Int, UnsafeRow) = (0, row)
       private[this] val EOF: Int = -1
 
@@ -125,7 +117,7 @@ private class UnsafeRowSerializerInstance(
               rowBuffer = new Array[Byte](rowSize)
             }
             ByteStreams.readFully(dIn, rowBuffer, 0, rowSize)
-            row.pointTo(rowBuffer, Platform.BYTE_ARRAY_OFFSET, rowSize)
+            row.pointTo(rowBuffer, Platform.BYTE_ARRAY_OFFSET, numFields, rowSize)
             rowSize = readSize()
             if (rowSize == EOF) { // We are returning the last row in this stream
               dIn.close()
@@ -160,7 +152,7 @@ private class UnsafeRowSerializerInstance(
           rowBuffer = new Array[Byte](rowSize)
         }
         ByteStreams.readFully(dIn, rowBuffer, 0, rowSize)
-        row.pointTo(rowBuffer, Platform.BYTE_ARRAY_OFFSET, rowSize)
+        row.pointTo(rowBuffer, Platform.BYTE_ARRAY_OFFSET, numFields, rowSize)
         row.asInstanceOf[T]
       }
 

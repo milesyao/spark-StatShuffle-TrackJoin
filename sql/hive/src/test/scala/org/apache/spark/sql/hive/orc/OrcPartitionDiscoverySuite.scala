@@ -22,8 +22,8 @@ import java.io.File
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
-import org.apache.hadoop.hive.conf.HiveConf.ConfVars
 import org.scalatest.BeforeAndAfterAll
+import org.apache.hadoop.hive.conf.HiveConf.ConfVars
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.hive.test.TestHiveSingleton
@@ -90,7 +90,7 @@ class OrcPartitionDiscoverySuite extends QueryTest with TestHiveSingleton with B
           makePartitionDir(base, defaultPartitionName, "pi" -> pi, "ps" -> ps))
       }
 
-      read.orc(base.getCanonicalPath).createOrReplaceTempView("t")
+      read.orc(base.getCanonicalPath).registerTempTable("t")
 
       withTempTable("t") {
         checkAnswer(
@@ -137,7 +137,7 @@ class OrcPartitionDiscoverySuite extends QueryTest with TestHiveSingleton with B
           makePartitionDir(base, defaultPartitionName, "pi" -> pi, "ps" -> ps))
       }
 
-      read.orc(base.getCanonicalPath).createOrReplaceTempView("t")
+      read.orc(base.getCanonicalPath).registerTempTable("t")
 
       withTempTable("t") {
         checkAnswer(
@@ -189,7 +189,7 @@ class OrcPartitionDiscoverySuite extends QueryTest with TestHiveSingleton with B
       read
         .option(ConfVars.DEFAULTPARTITIONNAME.varname, defaultPartitionName)
         .orc(base.getCanonicalPath)
-        .createOrReplaceTempView("t")
+        .registerTempTable("t")
 
       withTempTable("t") {
         checkAnswer(
@@ -231,7 +231,7 @@ class OrcPartitionDiscoverySuite extends QueryTest with TestHiveSingleton with B
       read
         .option(ConfVars.DEFAULTPARTITIONNAME.varname, defaultPartitionName)
         .orc(base.getCanonicalPath)
-        .createOrReplaceTempView("t")
+        .registerTempTable("t")
 
       withTempTable("t") {
         checkAnswer(

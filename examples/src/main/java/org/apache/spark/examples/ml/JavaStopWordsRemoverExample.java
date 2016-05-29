@@ -17,14 +17,16 @@
 
 package org.apache.spark.examples.ml;
 
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.SQLContext;
 
 // $example on$
 import java.util.Arrays;
-import java.util.List;
 
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.ml.feature.StopWordsRemover;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.types.DataTypes;
@@ -36,29 +38,28 @@ import org.apache.spark.sql.types.StructType;
 public class JavaStopWordsRemoverExample {
 
   public static void main(String[] args) {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaStopWordsRemoverExample")
-      .getOrCreate();
+    SparkConf conf = new SparkConf().setAppName("JavaStopWordsRemoverExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext jsql = new SQLContext(jsc);
 
     // $example on$
     StopWordsRemover remover = new StopWordsRemover()
       .setInputCol("raw")
       .setOutputCol("filtered");
 
-    List<Row> data = Arrays.asList(
+    JavaRDD<Row> rdd = jsc.parallelize(Arrays.asList(
       RowFactory.create(Arrays.asList("I", "saw", "the", "red", "baloon")),
       RowFactory.create(Arrays.asList("Mary", "had", "a", "little", "lamb"))
-    );
+    ));
 
     StructType schema = new StructType(new StructField[]{
       new StructField(
         "raw", DataTypes.createArrayType(DataTypes.StringType), false, Metadata.empty())
     });
 
-    Dataset<Row> dataset = spark.createDataFrame(data, schema);
+    DataFrame dataset = jsql.createDataFrame(rdd, schema);
     remover.transform(dataset).show();
     // $example off$
-    spark.stop();
+    jsc.stop();
   }
 }

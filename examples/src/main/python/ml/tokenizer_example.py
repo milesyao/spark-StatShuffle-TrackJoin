@@ -17,19 +17,18 @@
 
 from __future__ import print_function
 
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
 # $example on$
 from pyspark.ml.feature import Tokenizer, RegexTokenizer
 # $example off$
-from pyspark.sql import SparkSession
 
 if __name__ == "__main__":
-    spark = SparkSession\
-        .builder\
-        .appName("TokenizerExample")\
-        .getOrCreate()
+    sc = SparkContext(appName="TokenizerExample")
+    sqlContext = SQLContext(sc)
 
     # $example on$
-    sentenceDataFrame = spark.createDataFrame([
+    sentenceDataFrame = sqlContext.createDataFrame([
         (0, "Hi I heard about Spark"),
         (1, "I wish Java could use case classes"),
         (2, "Logistic,regression,models,are,neat")
@@ -42,4 +41,4 @@ if __name__ == "__main__":
     # alternatively, pattern="\\w+", gaps(False)
     # $example off$
 
-    spark.stop()
+    sc.stop()

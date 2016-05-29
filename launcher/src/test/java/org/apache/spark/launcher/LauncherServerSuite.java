@@ -23,11 +23,11 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.Test;
 import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
 
 import static org.apache.spark.launcher.LauncherProtocol.*;
 
@@ -69,35 +69,48 @@ public class LauncherServerSuite extends BaseSuite {
       Socket s = new Socket(InetAddress.getLoopbackAddress(),
         LauncherServer.getServerInstance().getPort());
 
-      final Semaphore semaphore = new Semaphore(0);
+      final Object waitLock = new Object();
       handle.addListener(new SparkAppHandle.Listener() {
         @Override
         public void stateChanged(SparkAppHandle handle) {
-          semaphore.release();
+          wakeUp();
         }
+
         @Override
         public void infoChanged(SparkAppHandle handle) {
-          semaphore.release();
+          wakeUp();
+        }
+
+        private void wakeUp() {
+          synchronized (waitLock) {
+            waitLock.notifyAll();
+          }
         }
       });
 
       client = new TestClient(s);
-      client.send(new Hello(handle.getSecret(), "1.4.0"));
-      assertTrue(semaphore.tryAcquire(30, TimeUnit.SECONDS));
+      synchronized (waitLock) {
+        client.send(new Hello(handle.getSecret(), "1.4.0"));
+        waitLock.wait(TimeUnit.SECONDS.toMillis(10));
+      }
 
       // Make sure the server matched the client to the handle.
       assertNotNull(handle.getConnection());
 
-      client.send(new SetAppId("app-id"));
-      assertTrue(semaphore.tryAcquire(30, TimeUnit.SECONDS));
+      synchronized (waitLock) {
+        client.send(new SetAppId("app-id"));
+        waitLock.wait(TimeUnit.SECONDS.toMillis(10));
+      }
       assertEquals("app-id", handle.getAppId());
 
-      client.send(new SetState(SparkAppHandle.State.RUNNING));
-      assertTrue(semaphore.tryAcquire(1, TimeUnit.SECONDS));
+      synchronized (waitLock) {
+        client.send(new SetState(SparkAppHandle.State.RUNNING));
+        waitLock.wait(TimeUnit.SECONDS.toMillis(10));
+      }
       assertEquals(SparkAppHandle.State.RUNNING, handle.getState());
 
       handle.stop();
-      Message stopMsg = client.inbound.poll(30, TimeUnit.SECONDS);
+      Message stopMsg = client.inbound.poll(10, TimeUnit.SECONDS);
       assertTrue(stopMsg instanceof Stop);
     } finally {
       kill(handle);
@@ -175,7 +188,7 @@ public class LauncherServerSuite extends BaseSuite {
 
     TestClient(Socket s) throws IOException {
       super(s);
-      this.inbound = new LinkedBlockingQueue<>();
+      this.inbound = new LinkedBlockingQueue<Message>();
       this.clientThread = new Thread(this);
       clientThread.setName("TestClient");
       clientThread.setDaemon(true);

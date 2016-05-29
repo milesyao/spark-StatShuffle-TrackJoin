@@ -428,19 +428,15 @@ class SparkContext(object):
         # because it sends O(n) Py4J commands.  As an alternative, serialized
         # objects are written to a file and loaded through textFile().
         tempFile = NamedTemporaryFile(delete=False, dir=self._temp_dir)
-        try:
-            # Make sure we distribute data evenly if it's smaller than self.batchSize
-            if "__len__" not in dir(c):
-                c = list(c)    # Make it a list so we can compute its length
-            batchSize = max(1, min(len(c) // numSlices, self._batchSize or 1024))
-            serializer = BatchedSerializer(self._unbatched_serializer, batchSize)
-            serializer.dump_stream(c, tempFile)
-            tempFile.close()
-            readRDDFromFile = self._jvm.PythonRDD.readRDDFromFile
-            jrdd = readRDDFromFile(self._jsc, tempFile.name, numSlices)
-        finally:
-            # readRDDFromFile eagerily reads the file so we can delete right after.
-            os.unlink(tempFile.name)
+        # Make sure we distribute data evenly if it's smaller than self.batchSize
+        if "__len__" not in dir(c):
+            c = list(c)    # Make it a list so we can compute its length
+        batchSize = max(1, min(len(c) // numSlices, self._batchSize or 1024))
+        serializer = BatchedSerializer(self._unbatched_serializer, batchSize)
+        serializer.dump_stream(c, tempFile)
+        tempFile.close()
+        readRDDFromFile = self._jvm.PythonRDD.readRDDFromFile
+        jrdd = readRDDFromFile(self._jsc, tempFile.name, numSlices)
         return RDD(jrdd, self, serializer)
 
     def pickleFile(self, name, minPartitions=None):
@@ -951,11 +947,6 @@ class SparkContext(object):
         """ Dump the profile stats into directory `path`
         """
         self.profiler_collector.dump_profiles(path)
-
-    def getConf(self):
-        conf = SparkConf()
-        conf.setAll(self._conf.getAll())
-        return conf
 
 
 def _test():

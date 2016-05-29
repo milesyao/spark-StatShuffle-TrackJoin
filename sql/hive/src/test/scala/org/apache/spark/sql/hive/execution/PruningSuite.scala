@@ -21,22 +21,18 @@ import scala.collection.JavaConverters._
 
 import org.scalatest.BeforeAndAfter
 
-import org.apache.spark.sql.hive.test.{TestHive, TestHiveQueryExecution}
+import org.apache.spark.sql.hive.test.TestHive
 
 /**
  * A set of test cases that validate partition and column pruning.
  */
 class PruningSuite extends HiveComparisonTest with BeforeAndAfter {
+  TestHive.cacheTables = false
 
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    TestHive.setCacheTables(false)
-    // Column/partition pruning is not implemented for `InMemoryColumnarTableScan` yet,
-    // need to reset the environment to ensure all referenced tables in this suites are
-    // not cached in-memory. Refer to https://issues.apache.org/jira/browse/SPARK-2283
-    // for details.
-    TestHive.reset()
-  }
+  // Column/partition pruning is not implemented for `InMemoryColumnarTableScan` yet, need to reset
+  // the environment to ensure all referenced tables in this suites are not cached in-memory.
+  // Refer to https://issues.apache.org/jira/browse/SPARK-2283 for details.
+  TestHive.reset()
 
   // Column pruning tests
 
@@ -148,12 +144,12 @@ class PruningSuite extends HiveComparisonTest with BeforeAndAfter {
       expectedScannedColumns: Seq[String],
       expectedPartValues: Seq[Seq[String]]): Unit = {
     test(s"$testCaseName - pruning test") {
-      val plan = new TestHiveQueryExecution(sql).sparkPlan
+      val plan = new TestHive.QueryExecution(sql).executedPlan
       val actualOutputColumns = plan.output.map(_.name)
       val (actualScannedColumns, actualPartValues) = plan.collect {
-        case p @ HiveTableScanExec(columns, relation, _) =>
+        case p @ HiveTableScan(columns, relation, _) =>
           val columnNames = columns.map(_.name)
-          val partValues = if (relation.catalogTable.partitionColumnNames.nonEmpty) {
+          val partValues = if (relation.table.isPartitioned) {
             p.prunePartitions(relation.getHiveQlPartitions()).map(_.getValues)
           } else {
             Seq.empty

@@ -21,7 +21,7 @@ import org.apache.spark.SparkFunSuite
 
 class EdgeSuite extends SparkFunSuite {
   test ("compare") {
-    // descending order
+    // decending order
     val testEdges: Array[Edge[Int]] = Array(
       Edge(0x7FEDCBA987654321L, -0x7FEDCBA987654321L, 1),
       Edge(0x2345L, 0x1234L, 1),

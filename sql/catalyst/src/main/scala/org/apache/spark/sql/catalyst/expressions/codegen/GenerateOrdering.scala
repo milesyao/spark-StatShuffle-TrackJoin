@@ -17,13 +17,10 @@
 
 package org.apache.spark.sql.catalyst.expressions.codegen
 
-import java.io.ObjectInputStream
-
-import org.apache.spark.internal.Logging
+import org.apache.spark.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.Utils
 
 /**
  * Inherits some default implementation for Java from `Ordering[Row]`
@@ -58,7 +55,7 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
    * Generates the code for comparing a struct type according to its natural ordering
    * (i.e. ascending order by field 1, then field 2, ..., then field n.
    */
-  def genComparisons(ctx: CodegenContext, schema: StructType): String = {
+  def genComparisons(ctx: CodeGenContext, schema: StructType): String = {
     val ordering = schema.fields.map(_.dataType).zipWithIndex.map {
       case(dt, index) => new SortOrder(BoundReference(index, dt, nullable = true), Ascending)
     }
@@ -68,9 +65,9 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
   /**
    * Generates the code for ordering based on the given order.
    */
-  def genComparisons(ctx: CodegenContext, ordering: Seq[SortOrder]): String = {
+  def genComparisons(ctx: CodeGenContext, ordering: Seq[SortOrder]): String = {
     val comparisons = ordering.map { order =>
-      val eval = order.child.genCode(ctx)
+      val eval = order.child.gen(ctx)
       val asc = order.direction == Ascending
       val isNullA = ctx.freshName("isNullA")
       val primitiveA = ctx.freshName("primitiveA")
@@ -113,20 +110,20 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
   protected def create(ordering: Seq[SortOrder]): BaseOrdering = {
     val ctx = newCodeGenContext()
     val comparisons = genComparisons(ctx, ordering)
-    val codeBody = s"""
-      public SpecificOrdering generate(Object[] references) {
-        return new SpecificOrdering(references);
+    val code = s"""
+      public SpecificOrdering generate($exprType[] expr) {
+        return new SpecificOrdering(expr);
       }
 
       class SpecificOrdering extends ${classOf[BaseOrdering].getName} {
 
-        private Object[] references;
-        ${ctx.declareMutableStates()}
-        ${ctx.declareAddedFunctions()}
+        private $exprType[] expressions;
+        ${declareMutableStates(ctx)}
+        ${declareAddedFunctions(ctx)}
 
-        public SpecificOrdering(Object[] references) {
-          this.references = references;
-          ${ctx.initMutableStates()}
+        public SpecificOrdering($exprType[] expr) {
+          expressions = expr;
+          ${initMutableStates(ctx)}
         }
 
         public int compare(InternalRow a, InternalRow b) {
@@ -136,44 +133,8 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], Ordering[InternalR
         }
       }"""
 
-    val code = CodeFormatter.stripOverlappingComments(
-      new CodeAndComment(codeBody, ctx.getPlaceHolderToComments()))
-    logDebug(s"Generated Ordering by ${ordering.mkString(",")}:\n${CodeFormatter.format(code)}")
+    logDebug(s"Generated Ordering: ${CodeFormatter.format(code)}")
 
-    CodeGenerator.compile(code).generate(ctx.references.toArray).asInstanceOf[BaseOrdering]
-  }
-}
-
-/**
- * A lazily generated row ordering comparator.
- */
-class LazilyGeneratedOrdering(val ordering: Seq[SortOrder]) extends Ordering[InternalRow] {
-
-  def this(ordering: Seq[SortOrder], inputSchema: Seq[Attribute]) =
-    this(ordering.map(BindReferences.bindReference(_, inputSchema)))
-
-  @transient
-  private[this] var generatedOrdering = GenerateOrdering.generate(ordering)
-
-  def compare(a: InternalRow, b: InternalRow): Int = {
-    generatedOrdering.compare(a, b)
-  }
-
-  private def readObject(in: ObjectInputStream): Unit = Utils.tryOrIOException {
-    in.defaultReadObject()
-    generatedOrdering = GenerateOrdering.generate(ordering)
-  }
-}
-
-object LazilyGeneratedOrdering {
-
-  /**
-   * Creates a [[LazilyGeneratedOrdering]] for the given schema, in natural ascending order.
-   */
-  def forSchema(schema: StructType): LazilyGeneratedOrdering = {
-    new LazilyGeneratedOrdering(schema.zipWithIndex.map {
-      case (field, ordinal) =>
-        SortOrder(BoundReference(ordinal, field.dataType, nullable = true), Ascending)
-    })
+    compile(code).generate(ctx.references.toArray).asInstanceOf[BaseOrdering]
   }
 }

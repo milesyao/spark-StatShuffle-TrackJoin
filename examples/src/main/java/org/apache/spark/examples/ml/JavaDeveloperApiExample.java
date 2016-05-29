@@ -21,19 +21,21 @@ import java.util.List;
 
 import com.google.common.collect.Lists;
 
+import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.ml.classification.Classifier;
 import org.apache.spark.ml.classification.ClassificationModel;
-import org.apache.spark.ml.feature.LabeledPoint;
-import org.apache.spark.ml.linalg.BLAS;
-import org.apache.spark.ml.linalg.Vector;
-import org.apache.spark.ml.linalg.Vectors;
 import org.apache.spark.ml.param.IntParam;
 import org.apache.spark.ml.param.ParamMap;
 import org.apache.spark.ml.util.Identifiable$;
-import org.apache.spark.sql.Dataset;
+import org.apache.spark.mllib.linalg.BLAS;
+import org.apache.spark.mllib.linalg.Vector;
+import org.apache.spark.mllib.linalg.Vectors;
+import org.apache.spark.mllib.regression.LabeledPoint;
+import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.SQLContext;
 
 
 /**
@@ -49,10 +51,9 @@ import org.apache.spark.sql.SparkSession;
 public class JavaDeveloperApiExample {
 
   public static void main(String[] args) throws Exception {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaDeveloperApiExample")
-      .getOrCreate();
+    SparkConf conf = new SparkConf().setAppName("JavaDeveloperApiExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext jsql = new SQLContext(jsc);
 
     // Prepare training data.
     List<LabeledPoint> localTraining = Lists.newArrayList(
@@ -60,9 +61,9 @@ public class JavaDeveloperApiExample {
         new LabeledPoint(0.0, Vectors.dense(2.0, 1.0, -1.0)),
         new LabeledPoint(0.0, Vectors.dense(2.0, 1.3, 1.0)),
         new LabeledPoint(1.0, Vectors.dense(0.0, 1.2, -0.5)));
-    Dataset<Row> training = spark.createDataFrame(localTraining, LabeledPoint.class);
+    DataFrame training = jsql.createDataFrame(jsc.parallelize(localTraining), LabeledPoint.class);
 
-    // Create a LogisticRegression instance. This instance is an Estimator.
+    // Create a LogisticRegression instance.  This instance is an Estimator.
     MyJavaLogisticRegression lr = new MyJavaLogisticRegression();
     // Print out the parameters, documentation, and any default values.
     System.out.println("MyJavaLogisticRegression parameters:\n" + lr.explainParams() + "\n");
@@ -70,7 +71,7 @@ public class JavaDeveloperApiExample {
     // We may set parameters using setter methods.
     lr.setMaxIter(10);
 
-    // Learn a LogisticRegression model. This uses the parameters stored in lr.
+    // Learn a LogisticRegression model.  This uses the parameters stored in lr.
     MyJavaLogisticRegressionModel model = lr.fit(training);
 
     // Prepare test data.
@@ -78,20 +79,20 @@ public class JavaDeveloperApiExample {
         new LabeledPoint(1.0, Vectors.dense(-1.0, 1.5, 1.3)),
         new LabeledPoint(0.0, Vectors.dense(3.0, 2.0, -0.1)),
         new LabeledPoint(1.0, Vectors.dense(0.0, 2.2, -1.5)));
-    Dataset<Row> test = spark.createDataFrame(localTest, LabeledPoint.class);
+    DataFrame test = jsql.createDataFrame(jsc.parallelize(localTest), LabeledPoint.class);
 
     // Make predictions on test documents. cvModel uses the best model found (lrModel).
-    Dataset<Row> results = model.transform(test);
+    DataFrame results = model.transform(test);
     double sumPredictions = 0;
-    for (Row r : results.select("features", "label", "prediction").collectAsList()) {
+    for (Row r : results.select("features", "label", "prediction").collect()) {
       sumPredictions += r.getDouble(2);
     }
     if (sumPredictions != 0.0) {
       throw new Exception("MyJavaLogisticRegression predicted something other than 0," +
-          " even though all coefficients are 0!");
+          " even though all weights are 0!");
     }
 
-    spark.stop();
+    jsc.stop();
   }
 }
 
@@ -105,11 +106,11 @@ public class JavaDeveloperApiExample {
 class MyJavaLogisticRegression
   extends Classifier<Vector, MyJavaLogisticRegression, MyJavaLogisticRegressionModel> {
 
-  MyJavaLogisticRegression() {
+  public MyJavaLogisticRegression() {
     init();
   }
 
-  MyJavaLogisticRegression(String uid) {
+  public MyJavaLogisticRegression(String uid) {
     this.uid_ = uid;
     init();
   }
@@ -144,16 +145,16 @@ class MyJavaLogisticRegression
 
   // This method is used by fit().
   // In Java, we have to make it public since Java does not understand Scala's protected modifier.
-  public MyJavaLogisticRegressionModel train(Dataset<?> dataset) {
+  public MyJavaLogisticRegressionModel train(DataFrame dataset) {
     // Extract columns from data using helper method.
     JavaRDD<LabeledPoint> oldDataset = extractLabeledPoints(dataset).toJavaRDD();
 
-    // Do learning to estimate the coefficients vector.
+    // Do learning to estimate the weight vector.
     int numFeatures = oldDataset.take(1).get(0).features().size();
-    Vector coefficients = Vectors.zeros(numFeatures); // Learning would happen here.
+    Vector weights = Vectors.zeros(numFeatures); // Learning would happen here.
 
     // Create a model, and return it.
-    return new MyJavaLogisticRegressionModel(uid(), coefficients).setParent(this);
+    return new MyJavaLogisticRegressionModel(uid(), weights).setParent(this);
   }
 
   @Override
@@ -172,12 +173,12 @@ class MyJavaLogisticRegression
 class MyJavaLogisticRegressionModel
   extends ClassificationModel<Vector, MyJavaLogisticRegressionModel> {
 
-  private Vector coefficients_;
-  public Vector coefficients() { return coefficients_; }
+  private Vector weights_;
+  public Vector weights() { return weights_; }
 
-  MyJavaLogisticRegressionModel(String uid, Vector coefficients) {
+  public MyJavaLogisticRegressionModel(String uid, Vector weights) {
     this.uid_ = uid;
-    this.coefficients_ = coefficients;
+    this.weights_ = weights;
   }
 
   private String uid_ = Identifiable$.MODULE$.randomUID("myJavaLogReg");
@@ -207,34 +208,34 @@ class MyJavaLogisticRegressionModel
    * modifier.
    */
   public Vector predictRaw(Vector features) {
-    double margin = BLAS.dot(features, coefficients_);
+    double margin = BLAS.dot(features, weights_);
     // There are 2 classes (binary classification), so we return a length-2 vector,
     // where index i corresponds to class i (i = 0, 1).
     return Vectors.dense(-margin, margin);
   }
 
   /**
-   * Number of classes the label can take. 2 indicates binary classification.
+   * Number of classes the label can take.  2 indicates binary classification.
    */
   public int numClasses() { return 2; }
 
   /**
    * Number of features the model was trained on.
    */
-  public int numFeatures() { return coefficients_.size(); }
+  public int numFeatures() { return weights_.size(); }
 
   /**
    * Create a copy of the model.
    * The copy is shallow, except for the embedded paramMap, which gets a deep copy.
    * <p>
-   * This is used for the default implementation of [[transform()]].
+   * This is used for the defaul implementation of [[transform()]].
    *
    * In Java, we have to make this method public since Java does not understand Scala's protected
    * modifier.
    */
   @Override
   public MyJavaLogisticRegressionModel copy(ParamMap extra) {
-    return copyValues(new MyJavaLogisticRegressionModel(uid(), coefficients_), extra)
+    return copyValues(new MyJavaLogisticRegressionModel(uid(), weights_), extra)
       .setParent(parent());
   }
 }

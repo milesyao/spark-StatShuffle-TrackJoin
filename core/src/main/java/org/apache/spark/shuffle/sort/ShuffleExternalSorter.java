@@ -84,9 +84,9 @@ final class ShuffleExternalSorter extends MemoryConsumer {
    * this might not be necessary if we maintained a pool of re-usable pages in the TaskMemoryManager
    * itself).
    */
-  private final LinkedList<MemoryBlock> allocatedPages = new LinkedList<>();
+  private final LinkedList<MemoryBlock> allocatedPages = new LinkedList<MemoryBlock>();
 
-  private final LinkedList<SpillInfo> spills = new LinkedList<>();
+  private final LinkedList<SpillInfo> spills = new LinkedList<SpillInfo>();
 
   /** Peak memory used by this sorter so far, in bytes. **/
   private long peakMemoryUsedBytes;
@@ -96,7 +96,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
   @Nullable private MemoryBlock currentPage = null;
   private long pageCursor = -1;
 
-  ShuffleExternalSorter(
+  public ShuffleExternalSorter(
       TaskMemoryManager memoryManager,
       BlockManager blockManager,
       TaskContext taskContext,
@@ -104,9 +104,8 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       int numPartitions,
       SparkConf conf,
       ShuffleWriteMetrics writeMetrics) {
-    super(memoryManager,
-      (int) Math.min(PackedRecordPointer.MAXIMUM_PAGE_SIZE_BYTES, memoryManager.pageSizeBytes()),
-      memoryManager.getTungstenMemoryMode());
+    super(memoryManager, (int) Math.min(PackedRecordPointer.MAXIMUM_PAGE_SIZE_BYTES,
+      memoryManager.pageSizeBytes()));
     this.taskMemoryManager = memoryManager;
     this.blockManager = blockManager;
     this.taskContext = taskContext;
@@ -116,8 +115,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
     this.numElementsForSpillThreshold =
       conf.getLong("spark.shuffle.spill.numElementsForceSpillThreshold", Long.MAX_VALUE);
     this.writeMetrics = writeMetrics;
-    this.inMemSorter = new ShuffleInMemorySorter(
-      this, initialSize, conf.getBoolean("spark.shuffle.sort.useRadixSort", true));
+    this.inMemSorter = new ShuffleInMemorySorter(this, initialSize);
     this.peakMemoryUsedBytes = getMemoryUsage();
   }
 
@@ -217,6 +215,8 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       }
     }
 
+    inMemSorter.reset();
+
     if (!isLastFile) {  // i.e. this is a spill file
       // The current semantics of `shuffleRecordsWritten` seem to be that it's updated when records
       // are written to disk, not when they enter the shuffle sorting code. DiskBlockObjectWriter
@@ -233,8 +233,8 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       // Note that we intentionally ignore the value of `writeMetricsToUse.shuffleWriteTime()`.
       // Consistent with ExternalSorter, we do not count this IO towards shuffle write time.
       // This means that this IO time is not accounted for anywhere; SPARK-3577 will fix this.
-      writeMetrics.incRecordsWritten(writeMetricsToUse.recordsWritten());
-      taskContext.taskMetrics().incDiskBytesSpilled(writeMetricsToUse.bytesWritten());
+      writeMetrics.incShuffleRecordsWritten(writeMetricsToUse.shuffleRecordsWritten());
+      taskContext.taskMetrics().incDiskBytesSpilled(writeMetricsToUse.shuffleBytesWritten());
     }
   }
 
@@ -255,10 +255,6 @@ final class ShuffleExternalSorter extends MemoryConsumer {
 
     writeSortedFile(false);
     final long spillSize = freeMemory();
-    inMemSorter.reset();
-    // Reset the in-memory sorter's pointer array only after freeing up the memory pages holding the
-    // records. Otherwise, if the task is over allocated memory, then without freeing the memory
-    // pages, we might not be able to get memory for the pointer array.
     taskContext.taskMetrics().incMemoryBytesSpilled(spillSize);
     return spillSize;
   }
@@ -324,18 +320,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
     assert(inMemSorter != null);
     if (!inMemSorter.hasSpaceForAnotherRecord()) {
       long used = inMemSorter.getMemoryUsage();
-      LongArray array;
-      try {
-        // could trigger spilling
-        array = allocateArray(used / 8 * 2);
-      } catch (OutOfMemoryError e) {
-        // should have trigger spilling
-        if (!inMemSorter.hasSpaceForAnotherRecord()) {
-          logger.error("Unable to grow the pointer array");
-          throw e;
-        }
-        return;
-      }
+      LongArray array = allocateArray(used / 8 * 2);
       // check if spilling is triggered or not
       if (inMemSorter.hasSpaceForAnotherRecord()) {
         freeArray(array);

@@ -17,15 +17,14 @@
 
 package org.apache.spark.rpc.netty
 
-import java.util.concurrent.{ConcurrentHashMap, LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
+import java.util.concurrent.{ThreadPoolExecutor, ConcurrentHashMap, LinkedBlockingQueue, TimeUnit}
 import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.JavaConverters._
 import scala.concurrent.Promise
 import scala.util.control.NonFatal
 
-import org.apache.spark.SparkException
-import org.apache.spark.internal.Logging
+import org.apache.spark.{SparkException, Logging}
 import org.apache.spark.network.client.RpcResponseCallback
 import org.apache.spark.rpc._
 import org.apache.spark.util.ThreadUtils
@@ -107,7 +106,7 @@ private[netty] class Dispatcher(nettyEnv: NettyRpcEnv) extends Logging {
     val iter = endpoints.keySet().iterator()
     while (iter.hasNext) {
       val name = iter.next
-      postMessage(name, message, (e) => logWarning(s"Message $message dropped. ${e.getMessage}"))
+      postMessage(name, message, (e) => logWarning(s"Message $message dropped.", e))
     }
   }
 
@@ -137,7 +136,7 @@ private[netty] class Dispatcher(nettyEnv: NettyRpcEnv) extends Logging {
    * Posts a message to a specific endpoint.
    *
    * @param endpointName name of the endpoint.
-   * @param message the message to post
+   * @param createMessageFn function to create the message.
    * @param callbackIfStopped callback function if the endpoint is stopped.
    */
   private def postMessage(
@@ -157,7 +156,7 @@ private[netty] class Dispatcher(nettyEnv: NettyRpcEnv) extends Logging {
     if (shouldCallOnStop) {
       // We don't need to call `onStop` in the `synchronized` block
       val error = if (stopped) {
-          new RpcEnvStoppedException()
+          new IllegalStateException("RpcEnv already stopped.")
         } else {
           new SparkException(s"Could not find $endpointName or it has been stopped.")
         }
@@ -193,7 +192,7 @@ private[netty] class Dispatcher(nettyEnv: NettyRpcEnv) extends Logging {
   /** Thread pool used for dispatching messages. */
   private val threadpool: ThreadPoolExecutor = {
     val numThreads = nettyEnv.conf.getInt("spark.rpc.netty.dispatcher.numThreads",
-      math.max(2, Runtime.getRuntime.availableProcessors()))
+      Runtime.getRuntime.availableProcessors())
     val pool = ThreadUtils.newDaemonFixedThreadPool(numThreads, "dispatcher-event-loop")
     for (i <- 0 until numThreads) {
       pool.execute(new MessageLoop)

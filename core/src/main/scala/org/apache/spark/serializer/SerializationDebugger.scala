@@ -25,7 +25,7 @@ import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.Logging
 
 private[spark] object SerializationDebugger extends Logging {
 
@@ -266,13 +266,7 @@ private[spark] object SerializationDebugger extends Logging {
       (o, desc)
     } else {
       // write place
-      val replaced = desc.invokeWriteReplace(o)
-      // `writeReplace` may return the same object.
-      if (replaced eq o) {
-        (o, desc)
-      } else {
-        findObjectAndDescriptor(replaced)
-      }
+      findObjectAndDescriptor(desc.invokeWriteReplace(o))
     }
   }
 

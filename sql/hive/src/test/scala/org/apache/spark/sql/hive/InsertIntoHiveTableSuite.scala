@@ -22,11 +22,9 @@ import java.io.File
 import org.apache.hadoop.hive.conf.HiveConf
 import org.scalatest.BeforeAndAfter
 
-import org.apache.spark.SparkException
+import org.apache.spark.sql.execution.QueryExecutionException
 import org.apache.spark.sql.{QueryTest, _}
-import org.apache.spark.sql.catalyst.plans.logical.InsertIntoTable
 import org.apache.spark.sql.hive.test.TestHiveSingleton
-import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
@@ -34,19 +32,19 @@ case class TestData(key: Int, value: String)
 
 case class ThreeCloumntable(key: Int, value: String, key1: String)
 
-class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with BeforeAndAfter
-    with SQLTestUtils {
+class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with BeforeAndAfter {
   import hiveContext.implicits._
+  import hiveContext.sql
 
-  override lazy val testData = hiveContext.sparkContext.parallelize(
+  val testData = hiveContext.sparkContext.parallelize(
     (1 to 100).map(i => TestData(i, i.toString))).toDF()
 
   before {
     // Since every we are doing tests for DDL statements,
     // it is better to reset before every test.
     hiveContext.reset()
-    // Creates a temporary view with testData, which will be used in all tests.
-    testData.createOrReplaceTempView("testData")
+    // Register the testData, which will be used in every test.
+    testData.registerTempTable("testData")
   }
 
   test("insertInto() HiveTable") {
@@ -83,7 +81,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
   test("Double create fails when allowExisting = false") {
     sql("CREATE TABLE doubleCreateAndInsertTest (key int, value string)")
 
-    intercept[AnalysisException] {
+    intercept[QueryExecutionException] {
       sql("CREATE TABLE doubleCreateAndInsertTest (key int, value string)")
     }
   }
@@ -98,7 +96,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
     val rowRDD = hiveContext.sparkContext.parallelize(
       (1 to 100).map(i => Row(scala.collection.mutable.HashMap(s"key$i" -> s"value$i"))))
     val df = hiveContext.createDataFrame(rowRDD, schema)
-    df.createOrReplaceTempView("tableWithMapValue")
+    df.registerTempTable("tableWithMapValue")
     sql("CREATE TABLE hiveTableWithMapValue(m MAP <STRING, STRING>)")
     sql("INSERT OVERWRITE TABLE hiveTableWithMapValue SELECT m FROM tableWithMapValue")
 
@@ -113,8 +111,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
   test("SPARK-4203:random partition directory order") {
     sql("CREATE TABLE tmp_table (key int, value string)")
     val tmpDir = Utils.createTempDir()
-    // The default value of hive.exec.stagingdir.
-    val stagingDir = ".hive-staging"
+    val stagingDir = new HiveConf().getVar(HiveConf.ConfVars.STAGINGDIR)
 
     sql(
       s"""
@@ -157,8 +154,8 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
     }
     val expected = List(
       "p1=a"::"p2=b"::"p3=c"::"p4=c"::"p5=2"::Nil,
-      "p1=a"::"p2=b"::"p3=c"::"p4=c"::"p5=3"::Nil,
-      "p1=a"::"p2=b"::"p3=c"::"p4=c"::"p5=1"::Nil,
+      "p1=a"::"p2=b"::"p3=c"::"p4=c"::"p5=3"::Nil ,
+      "p1=a"::"p2=b"::"p3=c"::"p4=c"::"p5=1"::Nil ,
       "p1=a"::"p2=b"::"p3=c"::"p4=c"::"p5=4"::Nil
     )
     assert(listFolders(tmpDir, List()).sortBy(_.toString()) === expected.sortBy(_.toString))
@@ -171,7 +168,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
       StructField("a", ArrayType(StringType, containsNull = false))))
     val rowRDD = hiveContext.sparkContext.parallelize((1 to 100).map(i => Row(Seq(s"value$i"))))
     val df = hiveContext.createDataFrame(rowRDD, schema)
-    df.createOrReplaceTempView("tableWithArrayValue")
+    df.registerTempTable("tableWithArrayValue")
     sql("CREATE TABLE hiveTableWithArrayValue(a Array <STRING>)")
     sql("INSERT OVERWRITE TABLE hiveTableWithArrayValue SELECT a FROM tableWithArrayValue")
 
@@ -188,7 +185,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
     val rowRDD = hiveContext.sparkContext.parallelize(
       (1 to 100).map(i => Row(Map(s"key$i" -> s"value$i"))))
     val df = hiveContext.createDataFrame(rowRDD, schema)
-    df.createOrReplaceTempView("tableWithMapValue")
+    df.registerTempTable("tableWithMapValue")
     sql("CREATE TABLE hiveTableWithMapValue(m Map <STRING, STRING>)")
     sql("INSERT OVERWRITE TABLE hiveTableWithMapValue SELECT m FROM tableWithMapValue")
 
@@ -205,7 +202,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
     val rowRDD = hiveContext.sparkContext.parallelize(
       (1 to 100).map(i => Row(Row(s"value$i"))))
     val df = hiveContext.createDataFrame(rowRDD, schema)
-    df.createOrReplaceTempView("tableWithStructValue")
+    df.registerTempTable("tableWithStructValue")
     sql("CREATE TABLE hiveTableWithStructValue(s Struct <f: STRING>)")
     sql("INSERT OVERWRITE TABLE hiveTableWithStructValue SELECT s FROM tableWithStructValue")
 
@@ -216,76 +213,50 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
     sql("DROP TABLE hiveTableWithStructValue")
   }
 
-  test("Reject partitioning that does not match table") {
-    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
-      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
-      val data = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd"))
-          .toDF("id", "data", "part")
+  test("SPARK-5498:partition schema does not match table schema") {
+    val testData = hiveContext.sparkContext.parallelize(
+      (1 to 10).map(i => TestData(i, i.toString))).toDF()
+    testData.registerTempTable("testData")
 
-      intercept[AnalysisException] {
-        // cannot partition by 2 fields when there is only one in the table definition
-        data.write.partitionBy("part", "data").insertInto("partitioned")
-      }
-    }
-  }
+    val testDatawithNull = hiveContext.sparkContext.parallelize(
+      (1 to 10).map(i => ThreeCloumntable(i, i.toString, null))).toDF()
 
-  test("Test partition mode = strict") {
-    withSQLConf(("hive.exec.dynamic.partition.mode", "strict")) {
-      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
-      val data = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd"))
-          .toDF("id", "data", "part")
+    val tmpDir = Utils.createTempDir()
+    sql(
+      s"""
+         |CREATE TABLE table_with_partition(key int,value string)
+         |PARTITIONED by (ds string) location '${tmpDir.toURI.toString}'
+       """.stripMargin)
+    sql(
+      """
+        |INSERT OVERWRITE TABLE table_with_partition
+        |partition (ds='1') SELECT key,value FROM testData
+      """.stripMargin)
 
-      intercept[SparkException] {
-        data.write.insertInto("partitioned")
-      }
-    }
-  }
+    // test schema the same between partition and table
+    sql("ALTER TABLE table_with_partition CHANGE COLUMN key key BIGINT")
+    checkAnswer(sql("select key,value from table_with_partition where ds='1' "),
+      testData.collect().toSeq
+    )
 
-  test("Detect table partitioning") {
-    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
-      sql("CREATE TABLE source (id bigint, data string, part string)")
-      val data = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd")).toDF()
+    // test difference type of field
+    sql("ALTER TABLE table_with_partition CHANGE COLUMN key key BIGINT")
+    checkAnswer(sql("select key,value from table_with_partition where ds='1' "),
+      testData.collect().toSeq
+    )
 
-      data.write.insertInto("source")
-      checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
+    // add column to table
+    sql("ALTER TABLE table_with_partition ADD COLUMNS(key1 string)")
+    checkAnswer(sql("select key,value,key1 from table_with_partition where ds='1' "),
+      testDatawithNull.collect().toSeq
+    )
 
-      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
-      // this will pick up the output partitioning from the table definition
-      spark.table("source").write.insertInto("partitioned")
+    // change column name to table
+    sql("ALTER TABLE table_with_partition CHANGE COLUMN key keynew BIGINT")
+    checkAnswer(sql("select keynew,value from table_with_partition where ds='1' "),
+      testData.collect().toSeq
+    )
 
-      checkAnswer(sql("SELECT * FROM partitioned"), data.collect().toSeq)
-    }
-  }
-
-  test("Detect table partitioning with correct partition order") {
-    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
-      sql("CREATE TABLE source (id bigint, part2 string, part1 string, data string)")
-      val data = (1 to 10).map(i => (i, if ((i % 2) == 0) "even" else "odd", "p", s"data-$i"))
-          .toDF("id", "part2", "part1", "data")
-
-      data.write.insertInto("source")
-      checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
-
-      // the original data with part1 and part2 at the end
-      val expected = data.select("id", "data", "part1", "part2")
-
-      sql(
-        """CREATE TABLE partitioned (id bigint, data string)
-          |PARTITIONED BY (part1 string, part2 string)""".stripMargin)
-      spark.table("source").write.insertInto("partitioned")
-
-      checkAnswer(sql("SELECT * FROM partitioned"), expected.collect().toSeq)
-    }
-  }
-
-  test("InsertIntoTable#resolved should include dynamic partitions") {
-    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
-      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
-      val data = (1 to 10).map(i => (i.toLong, s"data-$i")).toDF("id", "data")
-
-      val logical = InsertIntoTable(spark.table("partitioned").logicalPlan,
-        Map("part" -> None), data.logicalPlan, overwrite = false, ifNotExists = false)
-      assert(!logical.resolved, "Should not resolve: missing partition data")
-    }
+    sql("DROP TABLE table_with_partition")
   }
 }

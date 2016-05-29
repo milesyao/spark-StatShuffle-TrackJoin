@@ -17,6 +17,8 @@
 
 package org.apache.spark.examples.ml;
 
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaSparkContext;
 // $example on$
 import org.apache.spark.ml.Pipeline;
 import org.apache.spark.ml.PipelineModel;
@@ -25,24 +27,19 @@ import org.apache.spark.ml.classification.GBTClassificationModel;
 import org.apache.spark.ml.classification.GBTClassifier;
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator;
 import org.apache.spark.ml.feature.*;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.DataFrame;
+import org.apache.spark.sql.SQLContext;
 // $example off$
 
 public class JavaGradientBoostedTreeClassifierExample {
   public static void main(String[] args) {
-    SparkSession spark = SparkSession
-      .builder()
-      .appName("JavaGradientBoostedTreeClassifierExample")
-      .getOrCreate();
+    SparkConf conf = new SparkConf().setAppName("JavaGradientBoostedTreeClassifierExample");
+    JavaSparkContext jsc = new JavaSparkContext(conf);
+    SQLContext sqlContext = new SQLContext(jsc);
 
     // $example on$
     // Load and parse the data file, converting it to a DataFrame.
-    Dataset<Row> data = spark
-      .read()
-      .format("libsvm")
-      .load("data/mllib/sample_libsvm_data.txt");
+    DataFrame data = sqlContext.read().format("libsvm").load("data/mllib/sample_libsvm_data.txt");
 
     // Index labels, adding metadata to the label column.
     // Fit on whole dataset to include all labels in index.
@@ -59,9 +56,9 @@ public class JavaGradientBoostedTreeClassifierExample {
       .fit(data);
 
     // Split the data into training and test sets (30% held out for testing)
-    Dataset<Row>[] splits = data.randomSplit(new double[] {0.7, 0.3});
-    Dataset<Row> trainingData = splits[0];
-    Dataset<Row> testData = splits[1];
+    DataFrame[] splits = data.randomSplit(new double[] {0.7, 0.3});
+    DataFrame trainingData = splits[0];
+    DataFrame testData = splits[1];
 
     // Train a GBT model.
     GBTClassifier gbt = new GBTClassifier()
@@ -75,20 +72,20 @@ public class JavaGradientBoostedTreeClassifierExample {
       .setOutputCol("predictedLabel")
       .setLabels(labelIndexer.labels());
 
-    // Chain indexers and GBT in a Pipeline.
+    // Chain indexers and GBT in a Pipeline
     Pipeline pipeline = new Pipeline()
       .setStages(new PipelineStage[] {labelIndexer, featureIndexer, gbt, labelConverter});
 
-    // Train model. This also runs the indexers.
+    // Train model.  This also runs the indexers.
     PipelineModel model = pipeline.fit(trainingData);
 
     // Make predictions.
-    Dataset<Row> predictions = model.transform(testData);
+    DataFrame predictions = model.transform(testData);
 
     // Select example rows to display.
     predictions.select("predictedLabel", "label", "features").show(5);
 
-    // Select (prediction, true label) and compute test error.
+    // Select (prediction, true label) and compute test error
     MulticlassClassificationEvaluator evaluator = new MulticlassClassificationEvaluator()
       .setLabelCol("indexedLabel")
       .setPredictionCol("prediction")
@@ -100,6 +97,6 @@ public class JavaGradientBoostedTreeClassifierExample {
     System.out.println("Learned classification GBT model:\n" + gbtModel.toDebugString());
     // $example off$
 
-    spark.stop();
+    jsc.stop();
   }
 }

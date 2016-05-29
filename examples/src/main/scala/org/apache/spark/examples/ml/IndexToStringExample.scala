@@ -18,20 +18,21 @@
 // scalastyle:off println
 package org.apache.spark.examples.ml
 
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 // $example on$
-import org.apache.spark.ml.feature.{IndexToString, StringIndexer}
+import org.apache.spark.ml.feature.{StringIndexer, IndexToString}
 // $example off$
-import org.apache.spark.sql.SparkSession
 
 object IndexToStringExample {
   def main(args: Array[String]) {
-    val spark = SparkSession
-      .builder
-      .appName("IndexToStringExample")
-      .getOrCreate()
+    val conf = new SparkConf().setAppName("IndexToStringExample")
+    val sc = new SparkContext(conf)
+
+    val sqlContext = SQLContext.getOrCreate(sc)
 
     // $example on$
-    val df = spark.createDataFrame(Seq(
+    val df = sqlContext.createDataFrame(Seq(
       (0, "a"),
       (1, "b"),
       (2, "c"),
@@ -53,8 +54,7 @@ object IndexToStringExample {
     val converted = converter.transform(indexed)
     converted.select("id", "originalCategory").show()
     // $example off$
-
-    spark.stop()
+    sc.stop()
   }
 }
 // scalastyle:on println
