@@ -524,7 +524,20 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     groupByKey(new HashPartitioner(numPartitions))
   }
 
-  def shuffleAggregate[C:ClassTag] (partitioner: Partitioner,
+  def skewKeyAwareShuffle[C:ClassTag](partitioner: Partitioner): SaRDD[K,V,C] = {
+    if (keyClass.isArray && partitioner.isInstanceOf[HashPartitioner]) {
+      throw new SparkException("Default partitioner cannot partition array keys.")
+    }
+    if (self.partitioner == Some(partitioner)) {
+      throw new SparkException("shuffleAggregate: No shuffle needed, please use aggregate directly!")
+    }
+    val saRDD = new SaRDD[K, V, C](self.asInstanceOf[RDD[(K,V)]], partitioner, 2)
+
+    saRDD.cache().blankAggregate('0')
+    saRDD
+  }
+
+  def aggregateShuffle[C:ClassTag] (partitioner: Partitioner,
                         createCombiner: V => C,
                         mergeValue: (C, V) => C,
                         mergeCombiners: (C, C) => C): SaRDD[K,V,C] = {
@@ -534,7 +547,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     if (self.partitioner == Some(partitioner)) {
       throw new SparkException("shuffleAggregate: No shuffle needed, please use aggregate directly!")
     }
-    val saRDD = new SaRDD[K, V, C](self.asInstanceOf[RDD[(K,V)]], partitioner)
+    val saRDD = new SaRDD[K, V, C](self.asInstanceOf[RDD[(K,V)]], partitioner, 1)
 
     val aggregator = new Aggregator[K, V, C](
       self.context.clean(createCombiner),

@@ -41,7 +41,8 @@ private[spark] class SaRDDPartition(val idx: Int) extends Partition {
 @DeveloperApi
 class SaRDD[K: ClassTag, V: ClassTag, C: ClassTag](
                                                     @transient var prev: RDD[_ <: Product2[K, V]],
-                                                    part: Partitioner
+                                                    part: Partitioner,
+                                                    flag: Int = 0
                                                   )
   extends RDD[(K, C)](prev.context, Nil) {
   private var serializer: Option[Serializer] = None
@@ -78,7 +79,7 @@ class SaRDD[K: ClassTag, V: ClassTag, C: ClassTag](
 
   override def getDependencies: Seq[Dependency[_]] = {
 
-    List(new ShuffleDependency(prev, part, serializer, keyOrdering, aggregator, false, 1))
+    List(new ShuffleDependency(prev, part, serializer, keyOrdering, aggregator, false, flag))
   }
 
   override val partitioner = Some(part)
@@ -93,7 +94,7 @@ class SaRDD[K: ClassTag, V: ClassTag, C: ClassTag](
     tracker.getPreferredLocationsForShuffle(dep, partition.index)
   }
 
-  def getAggregateRes(): Option[Array[Any]] = {
+  def getShuffleStat(): Option[Array[Any]] = {
     val tracker = SparkEnv.get.mapOutputTracker.asInstanceOf[MapOutputTrackerMaster]
     val dep = dependencies.head.asInstanceOf[ShuffleDependency[K, V, C]]
     tracker.getBlockStatistics(dep.shuffleId)

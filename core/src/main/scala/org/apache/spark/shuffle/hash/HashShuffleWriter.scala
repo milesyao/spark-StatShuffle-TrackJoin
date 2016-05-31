@@ -26,6 +26,9 @@ import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle._
 import org.apache.spark.storage.DiskBlockObjectWriter
 
+import scala.collection.immutable.HashMap
+import scala.reflect.ClassTag
+
 private[spark] class HashShuffleWriter[K, V](
     shuffleBlockResolver: FileShuffleBlockResolver,
     handle: BaseShuffleHandle[K, V, _],
@@ -34,6 +37,7 @@ private[spark] class HashShuffleWriter[K, V](
   extends ShuffleWriter[K, V] with Logging {
 
   private var blkStat: Any = null
+  private var skewStat: Map[K, Int] = Map[K, Int]()
 
   private val dep = handle.dependency
   private val numOutputSplits = dep.partitioner.numPartitions
@@ -54,24 +58,34 @@ private[spark] class HashShuffleWriter[K, V](
 
   /** Write a bunch of records to this task's output */
   override def write(records: Iterator[Product2[K, V]]): Unit = {
-    if(dep.shuffleaggregate == 1) {
+    if (dep.shuffleaggregate == 1) {
       var flag = true
       for (elem <- records) {
-//         printf("\n record: " + elem.toString + "\n")
-        val elem1 = elem._1
-        val elem2 = elem._2
         val zeroValue: Any = dep.aggregator.get.createCombiner(elem._2)
-        if(flag) {
+        if (flag) {
           blkStat = zeroValue
           flag = false
         }
         blkStat = dep.aggregator.get.byPassCombiner(blkStat, dep.aggregator.get.byPassMergeValue(zeroValue, elem._2))
-        val bucketId = dep.partitioner.getPartition(elem1)
-        shuffle.writers(bucketId).write(elem1, elem2)
+        val bucketId = dep.partitioner.getPartition(elem._1)
+        shuffle.writers(bucketId).write(elem._1, elem._2)
       }
+    } else if (dep.shuffleaggregate == 2) {
+        val createCombiner = (input1: V) => 1
+        val mergeValue = (input1: Int, input2: V) => input1 + 1
+        val mergeCombiners = (input1: Int, input2: Int) => input1 + input2
+        val aggregator = new Aggregator[K, V, Int](createCombiner, mergeValue, mergeCombiners)
+
+        val keystat = aggregator.combineValuesByKey(records, context)
+        skewStat = keystat.toMap
+        blkStat = skewStat
+        for (elem <- records) {
+          val bucketId = dep.partitioner.getPartition(elem._1)
+          shuffle.writers(bucketId).write(elem._1, elem._2)
+        }
     } else {
       val iter = if (dep.aggregator.isDefined) {
-//        printf("heheheheheeh\n")
+
         if (dep.mapSideCombine) {
           dep.aggregator.get.combineValuesByKey(records, context)
         } else {
