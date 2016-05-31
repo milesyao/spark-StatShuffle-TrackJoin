@@ -33,7 +33,7 @@ private[spark] class HashShuffleWriter[K, V](
     context: TaskContext)
   extends ShuffleWriter[K, V] with Logging {
 
-  private var blkStat: Int = 0
+  private var blkStat: Any = null
 
   private val dep = handle.dependency
   private val numOutputSplits = dep.partitioner.numPartitions
@@ -54,23 +54,38 @@ private[spark] class HashShuffleWriter[K, V](
 
   /** Write a bunch of records to this task's output */
   override def write(records: Iterator[Product2[K, V]]): Unit = {
-    val iter = if (dep.aggregator.isDefined) {
-      if (dep.mapSideCombine) {
-        dep.aggregator.get.combineValuesByKey(records, context)
-      } else {
-        records
+    if(dep.shuffleaggregate == 1) {
+      var flag = true
+      for (elem <- records) {
+//         printf("\n record: " + elem.toString + "\n")
+        val elem1 = elem._1
+        val elem2 = elem._2
+        val zeroValue: Any = dep.aggregator.get.createCombiner(elem._2)
+        if(flag) {
+          blkStat = zeroValue
+          flag = false
+        }
+        blkStat = dep.aggregator.get.byPassCombiner(blkStat, dep.aggregator.get.byPassMergeValue(zeroValue, elem._2))
+        val bucketId = dep.partitioner.getPartition(elem1)
+        shuffle.writers(bucketId).write(elem1, elem2)
       }
     } else {
-      require(!dep.mapSideCombine, "Map-side combine without Aggregator specified!")
-      records
-    }
-
-    for (elem <- iter) {
-      if(dep.shuffleaggregate == 1 ) {
-        blkStat = blkStat + 1
+      val iter = if (dep.aggregator.isDefined) {
+//        printf("heheheheheeh\n")
+        if (dep.mapSideCombine) {
+          dep.aggregator.get.combineValuesByKey(records, context)
+        } else {
+          records
+        }
+      } else {
+        require(!dep.mapSideCombine, "Map-side combine without Aggregator specified!")
+        records
       }
-      val bucketId = dep.partitioner.getPartition(elem._1)
-      shuffle.writers(bucketId).write(elem._1, elem._2)
+
+      for (elem <- iter) {
+        val bucketId = dep.partitioner.getPartition(elem._1)
+        shuffle.writers(bucketId).write(elem._1, elem._2)
+      }
     }
   }
 

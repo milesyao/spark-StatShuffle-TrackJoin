@@ -86,7 +86,11 @@ private[spark] class BlockStoreShuffleReader[K, C](
         // have made sure its compatible w/ this aggregator, which will convert the value
         // type to the combined type C
         val keyValuesIterator = interruptibleIter.asInstanceOf[Iterator[(K, Nothing)]]
-        dep.aggregator.get.combineValuesByKey(keyValuesIterator, context)
+        if (dep.shuffleaggregate == 1) {
+          keyValuesIterator
+        } else {
+          dep.aggregator.get.combineValuesByKey(keyValuesIterator, context)
+        }
       }
     } else {
       require(!dep.mapSideCombine, "Map-side combine without Aggregator specified!")

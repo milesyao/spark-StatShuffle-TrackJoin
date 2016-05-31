@@ -47,6 +47,14 @@ case class Aggregator[K, V, C] (
     combiners.iterator
   }
 
+  def byPassMergeValue(elem1: Any, value:V): Any = {
+    mergeValue(elem1.asInstanceOf[C], value)
+  }
+
+  def byPassCombiner(elem1: Any, elem2: Any): Any = {
+    mergeCombiners(elem1.asInstanceOf[C], elem2.asInstanceOf[C])
+  }
+
   @deprecated("use combineCombinersByKey with TaskContext argument", "0.9.0")
   def combineCombinersByKey(iter: Iterator[_ <: Product2[K, C]]) : Iterator[(K, C)] =
     combineCombinersByKey(iter, null)

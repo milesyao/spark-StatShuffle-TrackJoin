@@ -180,7 +180,7 @@ private[spark] class DiskBlockObjectWriter(
     if (!initialized) {
       open()
     }
-
+//    print("\n [inner] " + key.toString + ", " + value.toString + "\n")
     objOut.writeKey(key)
     objOut.writeValue(value)
     recordWritten()

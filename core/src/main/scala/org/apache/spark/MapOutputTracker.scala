@@ -381,12 +381,12 @@ private[spark] class MapOutputTrackerMaster(conf: SparkConf)
     */
 
   def getBlockStatistics(shuffleId: Int)
-  : Option[Array[Int]] = {
+  : Option[Array[Any]] = {
 
     if (mapStatuses.contains(shuffleId)) {
       val statuses = mapStatuses(shuffleId)
       if (statuses.nonEmpty) {
-        val res = new Array[Int](statuses.length)
+        val res = new Array[Any](statuses.length)
         var mapIdx = 0
         while (mapIdx < statuses.length) {
           val status = statuses(mapIdx)
