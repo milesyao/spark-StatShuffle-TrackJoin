@@ -71,7 +71,7 @@ private[spark] class HashShuffleWriter[K, V](
         shuffle.writers(bucketId).write(elem._1, elem._2)
       }
     } else if (dep.shuffleaggregate == 2) {
-        val createCombiner = (input1: V) => 1
+        val createCombiner = (input1: V) => 0
         val mergeValue = (input1: Int, input2: V) => input1 + 1
         val mergeCombiners = (input1: Int, input2: Int) => input1 + input2
         val aggregator = new Aggregator[K, V, Int](createCombiner, mergeValue, mergeCombiners)
