@@ -1089,14 +1089,16 @@ abstract class RDD[T: ClassTag](
     jobResult
   }
 
-  def blankAggregate[U: ClassTag](zeroValue: U): Unit = withScope {
+  def blankAggregate(): Unit = withScope {
     // Clone the zero value since we will also be serializing it as part of tasks
-    var jobResult = Utils.clone(zeroValue, sc.env.serializer.newInstance())
+//    var jobResult = zeroValue //blankAggregate don't need to serialize
+    var jobResult = Utils.clone(0, sc.env.serializer.newInstance())
     val aggregatePartition = (it: Iterator[T]) => {
       it.filter(i => false)
-      zeroValue
+      0
     }
-    val mergeResult = (index: Int, taskResult: U) => jobResult = zeroValue
+//    val mergeResult = (index: Int, taskResult: U) => jobResult = zeroValue
+    val mergeResult = (index: Int, taskResult: Int) => jobResult = 0
     sc.runJob(this, aggregatePartition, mergeResult)
   }
 

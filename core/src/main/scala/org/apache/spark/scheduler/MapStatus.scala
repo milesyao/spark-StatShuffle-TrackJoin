@@ -20,11 +20,12 @@ package org.apache.spark.scheduler
 
 import java.io.{Externalizable, ObjectInput, ObjectOutput}
 
+import org.apache.spark.SparkEnv
 import org.roaringbitmap.RoaringBitmap
-
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
-
+import java.io._
+import java.nio.ByteBuffer
 /**
   * Result returned by a ShuffleMapTask to a scheduler. Includes the block manager address that the
   * task ran on as well as the sizes of outputs for each reducer, for passing on to the reduce tasks.
@@ -127,11 +128,13 @@ private[spark] class CompressedMapStatus(
     loc.writeExternal(out)
     out.writeInt(compressedSizes.length)
     out.write(compressedSizes)
-
     /**
       * Chunnan Yao
       */
-    out.writeObject(blkStat)
+    val closureSerializer = SparkEnv.get.closureSerializer.newInstance()
+    val blkStatByte: Array[Byte] = closureSerializer.serialize(blkStat).array
+    out.writeInt(blkStatByte.length)
+    out.write(blkStatByte)
   }
 
   override def readExternal(in: ObjectInput): Unit = Utils.tryOrIOException {
@@ -143,7 +146,12 @@ private[spark] class CompressedMapStatus(
     /**
       * Chunnan Yao
       */
-    blkStat = in.readObject().asInstanceOf[Any]
+    val blkStatByteLen = in.readInt()
+    val blkStatByte = new Array[Byte](blkStatByteLen)
+    in.readFully(blkStatByte)
+    val buf = ByteBuffer.wrap(blkStatByte)
+    val closureSerializer = SparkEnv.get.closureSerializer.newInstance()
+    blkStat = closureSerializer.deserialize(buf)
   }
 }
 
@@ -187,6 +195,11 @@ private[spark] class HighlyCompressedMapStatus private (
     loc.writeExternal(out)
     emptyBlocks.writeExternal(out)
     out.writeLong(avgSize)
+
+    val closureSerializer = SparkEnv.get.closureSerializer.newInstance()
+    val blkStatByte: Array[Byte] = closureSerializer.serialize(blkStat).array
+    out.writeInt(blkStatByte.length)
+    out.write(blkStatByte)
   }
 
   override def readExternal(in: ObjectInput): Unit = Utils.tryOrIOException {
@@ -194,6 +207,13 @@ private[spark] class HighlyCompressedMapStatus private (
     emptyBlocks = new RoaringBitmap()
     emptyBlocks.readExternal(in)
     avgSize = in.readLong()
+
+    val blkStatByteLen = in.readInt()
+    val blkStatByte = new Array[Byte](blkStatByteLen)
+    in.readFully(blkStatByte)
+    val buf = ByteBuffer.wrap(blkStatByte)
+    val closureSerializer = SparkEnv.get.closureSerializer.newInstance()
+    blkStat = closureSerializer.deserialize(buf)
   }
 }
 

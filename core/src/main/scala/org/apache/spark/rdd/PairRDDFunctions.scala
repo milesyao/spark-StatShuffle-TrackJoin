@@ -533,20 +533,28 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     }
     val saRDD = new SaRDD[K, V, C](self.asInstanceOf[RDD[(K,V)]], partitioner, 2)
 
-    saRDD.cache().blankAggregate('0')
+    saRDD.cache().blankAggregate()
     saRDD
   }
 
   def aggregateShuffle[C:ClassTag] (partitioner: Partitioner,
                         createCombiner: V => C,
                         mergeValue: (C, V) => C,
-                        mergeCombiners: (C, C) => C): SaRDD[K,V,C] = {
+                        mergeCombiners: (C, C) => C
+                                   ): SaRDD[K,V,C] = {
     if (keyClass.isArray && partitioner.isInstanceOf[HashPartitioner]) {
       throw new SparkException("Default partitioner cannot partition array keys.")
     }
     if (self.partitioner == Some(partitioner)) {
       throw new SparkException("shuffleAggregate: No shuffle needed, please use aggregate directly!")
     }
+
+//    val fakep: V = _
+//    val zeroValue = createCombiner(fakep)
+    // Clone the zero value since we will also be serializing it as part of tasks
+
+//    var jobResult = Utils.clone(zeroValue, SparkEnv.get.serializer.newInstance())
+
     val saRDD = new SaRDD[K, V, C](self.asInstanceOf[RDD[(K,V)]], partitioner, 1)
 
     val aggregator = new Aggregator[K, V, C](
@@ -554,7 +562,9 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
       self.context.clean(mergeValue),
       self.context.clean(mergeCombiners))
 
-      saRDD.setAggregator(aggregator).cache().blankAggregate('0')
+      saRDD.setSerializer(SparkEnv.get.serializer)
+           .setAggregator(aggregator).cache().blankAggregate()
+
       saRDD
   }
 
